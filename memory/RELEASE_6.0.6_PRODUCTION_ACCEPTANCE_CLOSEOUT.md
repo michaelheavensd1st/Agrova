@@ -207,6 +207,90 @@ Authenticated requests to `https://api-staging.aegisfarm.com` established the ad
 
 This proves the historical administrative records remain preserved while the retired fixture is excluded from operational API projections.
 
+### Isolated release-UAT deployed-browser receipt idempotency and recovery
+
+PASS.
+
+The previously outstanding browser-level receipt idempotency/recovery behavior was subsequently validated against the exact deployed frontend build at Git SHA `66bac60667df190c4cc2f704ed3d572d8828c90f`, using the Vercel deployment `https://agrovix-cqkncdkmc-commander-dons-projects.vercel.app` connected through `/api-proxy` to the isolated Railway release-UAT API at `https://agrovix-api-amused-ambition-release-uat.up.railway.app`.
+
+This browser evidence is intentionally distinct from the production API acceptance fixture above. The browser test ran against the isolated release-UAT environment, not against the production database or a separately established production frontend/domain. Release-UAT Alembic state was independently verified as exactly `0015_aqua_transfer_integrity (head)` for both `alembic current` and `alembic heads`. Runtime `/version` reported the staging environment and `git_commit = unknown`; the frontend SHA attribution therefore comes from deployment metadata rather than the runtime version payload.
+
+Controlled isolated browser fixture:
+
+- Organization ID: `d2f6442a-b525-40cd-b640-8e7c1a261039`
+- Organization retained active after testing.
+- Purchase Order ID: `39803bb3-a8aa-4688-a96a-c3273088b5d7`
+- Purchase Order number: `PO-2026-000001`
+- Purchase Order line ID: `59a670c7-33eb-42f4-9042-7820208be6b2`
+- Ordered quantity: `2.000000 kg`
+- Separate creator/admin and organization-scoped non-superuser approver actors were used.
+- Pre-mutation state: `APPROVED`, `0.000000 kg` received, zero receipts, and zero matching test lots.
+- Test lot code: `R606-BROWSER-IDEMPOTENCY-001`
+- Service worker count: `0`
+
+Deterministic browser idempotency/recovery proof:
+
+- Browser receipt POST #1 used idempotency-key SHA-256 `8c3af9338a0dd8c52418544f27467dae2b36d4bcca8aeefb2767c7f96dfbfbb9`.
+- Browser receipt POST #1 request-body SHA-256 was `9500c8a8f75f01ae6cdd8bb7e91672726d00465673eebe97e3903eb7af33837d`.
+- The exact browser request was forwarded upstream once and returned HTTP `201`.
+- Receipt ID: `15a240bb-99fb-4c00-9882-590525988178`
+- GRN: `GRN-2026-000001`
+- Inventory lot ID: `78577061-f84e-4240-be5e-eb89069ed507`
+- Inventory transaction ID: `576381ce-0210-4006-a64a-cf7807a3a176`
+- After the upstream commit, the page-facing response was deliberately aborted to reproduce an ambiguous network result.
+- The browser displayed the application's uncertain-result state and exposed `Retry same receipt`.
+- Independent read-only verification before retry proved exactly one matching receipt, one matching lot, one matching inventory transaction, and a `1.000000 kg` lot balance.
+- Browser receipt POST #2 used exactly the same idempotency-key SHA-256 and exactly the same request-body SHA-256.
+- Retry returned HTTP `200` with `X-Idempotent-Replay: true`.
+- The browser displayed `This receipt was already recorded. Current data has been refreshed.`
+- Final verification again proved exactly one receipt, one lot, one transaction, one total transaction for the lot, and a `1.000000 kg` balance.
+- Final Purchase Order state: `PARTIALLY_RECEIVED`.
+- Final Purchase Order line `received_quantity`: `1.000000`.
+- Total browser receipt POSTs: `2`.
+
+Result: `BROWSER_RECEIPT_IDEMPOTENCY_UAT=PASS`.
+
+### Deployed-browser GRN and immutable receipt-history proof
+
+PASS.
+
+A subsequent read-only browser verification confirmed:
+
+- Receipt GET returned HTTP `200`.
+- `receipt.grn` was exactly `GRN-2026-000001`.
+- The exact GRN was visible in Purchase Receipt history.
+- The GRN detail view opened successfully.
+- The browser displayed `Posted receipts are immutable.`
+
+Result: `FINAL_BROWSER_GRN_RECEIPT_PROOF=PASS`.
+
+### Isolated browser-UAT fixture retirement and preservation
+
+PASS.
+
+After the browser acceptance gate closed, only the disposable operational components of the isolated release-UAT fixture were retired:
+
+- Warehouse `141dee5f-032f-4516-b83e-bb48f6e2fd8f` (`R606_BROWSER_WH`) was changed to status `closed`.
+- Inventory item `73476ee4-3d25-4d05-9dcd-41e58596c956` (`R606-BROWSER-FEED`) was changed to `is_active = false`.
+- Supplier `db2360a1-e44a-469d-bfa4-c70b0cbd3bf2` (`R606-BROWSER-SUPPLIER`) was deactivated with reason `Release 6.0.6 isolated browser receipt UAT fixture retirement`.
+- All three retirement mutations returned HTTP `200`.
+
+Independent post-retirement read-only verification proved:
+
+- The closed warehouse remains present in the complete read set and is excluded when `operational_only=true`.
+- The inactive inventory item remains present in the complete read set and is excluded when `operational_only=true`.
+- Supplier `deactivated_at` is populated and the deactivation reason is preserved.
+- Receipt `15a240bb-99fb-4c00-9882-590525988178` remains present.
+- GRN remains `GRN-2026-000001`.
+- Inventory lot `78577061-f84e-4240-be5e-eb89069ed507` remains present with balance `1.000000 kg`.
+- Inventory transaction `576381ce-0210-4006-a64a-cf7807a3a176` remains present.
+- The Purchase Order remains `PARTIALLY_RECEIVED`.
+- The Purchase Order line remains at `received_quantity = 1.000000`.
+- The organization remains active.
+- Receipt, lot, transaction, transition, and audit evidence were not destructively deleted or neutralized.
+
+Results: `RETIREMENT_STATE=PASS`, `IMMUTABLE_RECEIPT_CHAIN=PASS`, and `POST_RETIREMENT_VERIFICATION=PASS`.
+
 ## 4. Release-UAT deployment verification
 
 Railway release-UAT API health returned HTTP `200` with Redis-backed rate limiting healthy.
@@ -221,7 +305,7 @@ Inside the release-UAT Railway container:
 - `alembic current`: `0015_aqua_transfer_integrity (head)`
 - `alembic heads`: `0015_aqua_transfer_integrity (head)`
 
-Final browser smoke validation on the canonical Vercel `develop` Preview confirmed the organization-scoped Purchase Orders page loaded the expected UAT records without a visible frontend error.
+Browser validation included the earlier Purchase Orders navigation smoke test and the later deterministic deployed-browser receipt idempotency/recovery test. The latter used the exact Vercel frontend build at SHA `66bac60667df190c4cc2f704ed3d572d8828c90f` connected through `/api-proxy` to the isolated Railway release-UAT API. The browser test proved a real first receipt commit, an intentionally ambiguous page-facing result, exact same-request retry, HTTP `200` idempotent replay, browser replay acknowledgement, and no duplicate receipt, lot, or inventory transaction.
 
 ## 5. Production preflight and database state
 
@@ -340,6 +424,8 @@ UAT fixtures must not be destructively deleted merely to remove acceptance evide
 
 The Release 6.0.6 Purchase Receipt fixture has completed supported operational retirement. Its warehouse is closed, item is inactive, and supplier is deactivated without deleting any of them. Its Purchase Receipt records, inventory lots, inventory transactions, PO transitions, and audit events remain immutable acceptance evidence and were not deleted, rewritten, or neutralized by a compensating adjustment. Its synthetic `100 kg` balance remains quarantined in the dedicated `UAT_RECEIPT_WH_A` / `UAT-RECEIPT-FEED` ledger namespace documented in Section 3.
 
+The separate isolated release-UAT browser fixture has also completed controlled retirement of only its disposable operational components. Warehouse `141dee5f-032f-4516-b83e-bb48f6e2fd8f` is closed, inventory item `73476ee4-3d25-4d05-9dcd-41e58596c956` is inactive, and supplier `db2360a1-e44a-469d-bfa4-c70b0cbd3bf2` is deactivated. Its organization remains active, its Purchase Order remains `PARTIALLY_RECEIVED` with `received_quantity = 1.000000`, and receipt `15a240bb-99fb-4c00-9882-590525988178`, GRN `GRN-2026-000001`, inventory lot `78577061-f84e-4240-be5e-eb89069ed507`, inventory transaction `576381ce-0210-4006-a64a-cf7807a3a176`, transition history, and audit evidence remain preserved.
+
 Aquaculture and other Purchase Order fixtures used to establish the acceptance evidence should remain available until the closeout commit/PR is safely merged and the evidence is no longer dependent on live fixture inspection.
 
 ## 11. Final acceptance statement
@@ -350,6 +436,6 @@ The current canonical production Git SHA is:
 
 `66bac60667df190c4cc2f704ed3d572d8828c90f`
 
-Railway production runs that exact SHA with Alembic aligned at `0015_aqua_transfer_integrity`. The canonical production frontend was rebuilt from the same accepted source commit with the corrected Production-only API proxy target. Authenticated production API and browser verification proves the retired fixture remains available administratively and historically while being excluded from operational API and Inventory Dashboard projections. Production acceptance and quarantine runtime verification are therefore complete and PASS.
+Railway production runs that exact SHA with Alembic aligned at `0015_aqua_transfer_integrity`. The canonical production frontend was rebuilt from the same accepted source commit with the corrected Production-only API proxy target. Authenticated production API and browser verification proves the retired fixture remains available administratively and historically while being excluded from operational API and Inventory Dashboard projections. Production acceptance and quarantine runtime verification are therefore complete and PASS. Separately, the deployed frontend build at the same source SHA passed deterministic Purchase Receipt idempotency/recovery validation against isolated release-UAT, including real first commit, ambiguous-result recovery, exact same-request replay, no duplicate inventory effect, GRN/history visibility, and preserved immutable evidence after controlled fixture retirement.
 
 No additional deployment or migration is required for production acceptance. Documentation/PR #39 closeout remains pending review, independently of the runtime PASS; no review thread has been resolved by this revision. Remaining follow-up is limited to that review and the still-valid technical debt in Section 9.
