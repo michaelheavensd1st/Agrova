@@ -33,6 +33,7 @@ import {
   type StockOperationForm,
   type StockOperationType,
   validateForm,
+  warehouseOptionsForStockOperation,
 } from '@/lib/stock-operations';
 import type { InventoryItem, ItemLedgerTx, ItemLot, ItemWarehouse } from '@/lib/inventory-items';
 
@@ -227,6 +228,24 @@ export function StockOperationDialog(props: StockOperationDialogProps) {
     () => lotsForWarehouse(lots, activeWarehouseId || null),
     [lots, activeWarehouseId],
   );
+  const adjustmentDirection = form.type === 'adjust' ? form.direction : null;
+  const sourceWarehouseOptions = useMemo(() => {
+    switch (form.type) {
+      case 'receive':
+        return warehouseOptionsForStockOperation(warehouses, 'receive');
+      case 'issue':
+        return warehouseOptionsForStockOperation(warehouses, 'issue');
+      case 'transfer':
+        return warehouseOptionsForStockOperation(warehouses, 'transfer-source');
+      case 'adjust':
+        return warehouseOptionsForStockOperation(
+          warehouses,
+          adjustmentDirection === 'increase' ? 'adjust-increase' : 'adjust-decrease',
+        );
+      case 'reverse':
+        return [];
+    }
+  }, [form.type, adjustmentDirection, warehouses]);
   const destOptions = useMemo(
     () => destinationOptions(warehouses, activeWarehouseId || ''),
     [warehouses, activeWarehouseId],
@@ -529,7 +548,7 @@ export function StockOperationDialog(props: StockOperationDialogProps) {
             {form.type === 'receive' && (
               <ReceiveFields
                 form={form}
-                warehouses={warehouses}
+                warehouses={sourceWarehouseOptions}
                 onChange={updateForm}
                 errors={fieldErrors}
                 testIdRoot={testIdRoot}
@@ -538,7 +557,7 @@ export function StockOperationDialog(props: StockOperationDialogProps) {
             {form.type === 'issue' && (
               <IssueFields
                 form={form}
-                warehouses={warehouses}
+                warehouses={sourceWarehouseOptions}
                 lotsInWarehouse={lotOptions}
                 onChange={updateForm}
                 errors={fieldErrors}
@@ -548,7 +567,7 @@ export function StockOperationDialog(props: StockOperationDialogProps) {
             {form.type === 'transfer' && (
               <TransferFields
                 form={form}
-                warehouses={warehouses}
+                warehouses={sourceWarehouseOptions}
                 lotsInWarehouse={lotOptions}
                 destinationChoices={destOptions}
                 onChange={updateForm}
@@ -559,7 +578,7 @@ export function StockOperationDialog(props: StockOperationDialogProps) {
             {form.type === 'adjust' && (
               <AdjustFields
                 form={form}
-                warehouses={warehouses}
+                warehouses={sourceWarehouseOptions}
                 lotsInWarehouse={lotOptions}
                 onChange={updateForm}
                 errors={fieldErrors}
@@ -854,7 +873,17 @@ function AdjustFields({
             name={`${testIdRoot}-direction`}
             data-testid={`${testIdRoot}-direction-decrease`}
             checked={form.direction === 'decrease'}
-            onChange={() => onChange({ type: 'adjust', direction: 'decrease' })}
+            onChange={() => {
+              const warehouseRemainsEligible = warehouseOptionsForStockOperation(
+                warehouses,
+                'adjust-decrease',
+              ).some((warehouse) => warehouse.id === form.warehouseId);
+              onChange({
+                type: 'adjust',
+                direction: 'decrease',
+                ...(warehouseRemainsEligible ? {} : { warehouseId: '', lotId: '' }),
+              });
+            }}
           />
           Decrease
         </label>

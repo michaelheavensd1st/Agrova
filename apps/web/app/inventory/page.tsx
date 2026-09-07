@@ -26,6 +26,7 @@ import {
   isWarehouseInCurrentOrg,
   resolveOrganizationId,
 } from '@/lib/inventory-dashboard';
+import { isWarehouseEligibleForStockOperation } from '@/lib/stock-operations';
 import {
   ConfirmDialog,
   EmptyStateCard,
@@ -1259,6 +1260,9 @@ function ReceivePanel({
   const [qty, setQty] = useState('');
   const [unit, setUnit] = useState<(typeof UNITS)[number]>('kg');
   const [busy, setBusy] = useState(false);
+  const eligibleWarehouses = warehouses.filter((warehouse) =>
+    isWarehouseEligibleForStockOperation(warehouse, 'receive'),
+  );
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -1270,6 +1274,14 @@ function ReceivePanel({
     // clear the offending field.
     if (!isWarehouseInCurrentOrg(selectedWh, warehouses)) {
       toast('Selected warehouse no longer belongs to this organization.', 'error');
+      return;
+    }
+    const selectedWarehouse = warehouses.find((warehouse) => warehouse.id === selectedWh);
+    if (
+      !selectedWarehouse ||
+      !isWarehouseEligibleForStockOperation(selectedWarehouse, 'receive')
+    ) {
+      toast('Selected warehouse is not available for receiving stock.', 'error');
       return;
     }
     if (!isItemInCurrentOrg(itemId, items)) {
@@ -1323,7 +1335,7 @@ function ReceivePanel({
           value={selectedWh}
           onChange={(e) => onSelectWh(e.target.value)}
         >
-          {warehouses.map((w) => (
+          {eligibleWarehouses.map((w) => (
             <option key={w.id} value={w.id}>
               {w.name}
             </option>
@@ -1424,9 +1436,21 @@ function TxPanel({
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState(false);
+  const warehouseOperation =
+    mode === 'issue'
+      ? 'issue'
+      : direction === 'increase'
+        ? 'adjust-increase'
+        : 'adjust-decrease';
+  const warehouseEligible =
+    warehouse !== null && isWarehouseEligibleForStockOperation(warehouse, warehouseOperation);
 
   async function doSubmit() {
     if (!warehouse) return;
+    if (!isWarehouseEligibleForStockOperation(warehouse, warehouseOperation)) {
+      setPendingConfirm(false);
+      return;
+    }
     // Sprint 5.1 review round #2 — cross-org guardrails.
     if (!isWarehouseInCurrentOrg(warehouse.id, warehouses)) {
       toast('Selected warehouse no longer belongs to this organization.', 'error');
@@ -1469,6 +1493,7 @@ function TxPanel({
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    if (!warehouseEligible) return;
     // Adjust always confirms; Issue confirms when decreasing.
     setPendingConfirm(true);
   }
@@ -1520,7 +1545,20 @@ function TxPanel({
               data-testid="inv-adjust-direction"
               className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1"
               value={direction}
-              onChange={(e) => setDirection(e.target.value as 'increase' | 'decrease')}
+              onChange={(e) => {
+                const nextDirection = e.target.value as 'increase' | 'decrease';
+                setDirection(nextDirection);
+                if (
+                  warehouse &&
+                  !isWarehouseEligibleForStockOperation(
+                    warehouse,
+                    nextDirection === 'increase' ? 'adjust-increase' : 'adjust-decrease',
+                  )
+                ) {
+                  setLotId('');
+                  setPendingConfirm(false);
+                }
+              }}
             >
               <option value="decrease">Decrease</option>
               <option value="increase">Increase</option>
@@ -1570,7 +1608,7 @@ function TxPanel({
         </label>
         <button
           type="submit"
-          disabled={busy || !warehouse || !lotId}
+          disabled={busy || !warehouseEligible || !lotId}
           data-testid={`inv-${mode}-submit`}
           className="col-span-full rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-60"
         >
@@ -1617,10 +1655,12 @@ function TransferPanel({
   const [qty, setQty] = useState('');
   const [unit, setUnit] = useState<(typeof UNITS)[number]>('kg');
   const [busy, setBusy] = useState(false);
+  const sourceEligible =
+    warehouse !== null && isWarehouseEligibleForStockOperation(warehouse, 'transfer-source');
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!warehouse || busy) return;
+    if (!warehouse || busy || !sourceEligible) return;
     // Sprint 5.1 review round #2 — validate source, destination and
     // lot all belong to the currently active organization before
     // POSTing. Prevents a lingering post-org-switch selection from
@@ -1631,6 +1671,14 @@ function TransferPanel({
     }
     if (!isWarehouseInCurrentOrg(dstWh, warehouses)) {
       toast('Destination warehouse no longer belongs to this organization.', 'error');
+      return;
+    }
+    const destinationWarehouse = warehouses.find((candidate) => candidate.id === dstWh);
+    if (
+      !destinationWarehouse ||
+      !isWarehouseEligibleForStockOperation(destinationWarehouse, 'transfer-destination')
+    ) {
+      toast('Destination warehouse is not available for receiving stock.', 'error');
       return;
     }
     if (!isLotInCurrentOrg(lotId, lots, warehouses, items)) {
@@ -1708,7 +1756,11 @@ function TransferPanel({
         >
           <option value="">— select —</option>
           {warehouses
-            .filter((w) => w.id !== warehouse?.id)
+            .filter(
+              (w) =>
+                w.id !== warehouse?.id &&
+                isWarehouseEligibleForStockOperation(w, 'transfer-destination'),
+            )
             .map((w) => (
               <option key={w.id} value={w.id}>
                 {w.name}
@@ -1748,7 +1800,7 @@ function TransferPanel({
       </div>
       <button
         type="submit"
-        disabled={busy || !warehouse || !lotId || !dstWh}
+        disabled={busy || !sourceEligible || !lotId || !dstWh}
         data-testid="inv-transfer-submit"
         className="col-span-full rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-60"
       >

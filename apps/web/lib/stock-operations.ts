@@ -296,6 +296,41 @@ export function makeIdempotencyKey(): string {
 // ------------------------------------------------------------------ //
 // Lot / warehouse filtering helpers                                  //
 // ------------------------------------------------------------------ //
+export type StockWarehouseOperation =
+  | 'receive'
+  | 'issue'
+  | 'transfer-source'
+  | 'transfer-destination'
+  | 'adjust-increase'
+  | 'adjust-decrease';
+
+/**
+ * Whether a warehouse can participate in a new stock mutation.
+ * Maintenance warehouses may receive stock, including transfers and
+ * adjustment increases, but cannot be a source of stock leaving.
+ */
+export function isWarehouseEligibleForStockOperation(
+  warehouse: Pick<ItemWarehouse, 'status'>,
+  operation: StockWarehouseOperation,
+): boolean {
+  if (warehouse.status === 'active') return true;
+  if (warehouse.status !== 'maintenance') return false;
+  return (
+    operation === 'receive' ||
+    operation === 'transfer-destination' ||
+    operation === 'adjust-increase'
+  );
+}
+
+export function warehouseOptionsForStockOperation(
+  warehouses: readonly ItemWarehouse[],
+  operation: StockWarehouseOperation,
+): ItemWarehouse[] {
+  return warehouses.filter((warehouse) =>
+    isWarehouseEligibleForStockOperation(warehouse, operation),
+  );
+}
+
 /**
  * Lots that belong to a given warehouse. `readonly` inputs so
  * the caller keeps ownership of the source arrays.
@@ -315,7 +350,9 @@ export function destinationOptions(
   warehouses: readonly ItemWarehouse[],
   sourceWarehouseId: string,
 ): ItemWarehouse[] {
-  return warehouses.filter((w) => w.id !== sourceWarehouseId);
+  return warehouseOptionsForStockOperation(warehouses, 'transfer-destination').filter(
+    (warehouse) => warehouse.id !== sourceWarehouseId,
+  );
 }
 
 // ------------------------------------------------------------------ //

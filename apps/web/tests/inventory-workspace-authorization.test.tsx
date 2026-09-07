@@ -87,6 +87,13 @@ const WH_B = {
   farm_id: null,
   organization_id: ORG_B.id,
 };
+const WH_MAINTENANCE = {
+  ...WH_A,
+  id: 'wh-maintenance',
+  code: 'A-MAINT',
+  name: 'Aegis maintenance store',
+  status: 'maintenance',
+};
 
 const ITEM_A = {
   id: 'item-A1',
@@ -124,6 +131,12 @@ const LOT_B = {
   warehouse_id: WH_B.id,
   lot_code: 'LOT-B-STASH',
 };
+const LOT_MAINTENANCE = {
+  ...LOT_A,
+  id: 'lot-maintenance',
+  warehouse_id: WH_MAINTENANCE.id,
+  lot_code: 'LOT-MAINTENANCE-STASH',
+};
 
 function deferred<T>() {
   let resolve!: (v: T) => void;
@@ -138,6 +151,39 @@ function deferred<T>() {
 async function switchTab(key: string) {
   const tab = await screen.findByTestId(`inv-tab-${key}`);
   fireEvent.click(tab);
+}
+
+function mockMaintenanceLifecycleWorkspace() {
+  mockedApiFetch.mockImplementation((path: string, init?: RequestInit) => {
+    if (path === '/v1/organizations') return Promise.resolve([ORG_A]);
+    if (path === `/v1/organizations/${ORG_A.id}/warehouses`)
+      return Promise.resolve([WH_A, WH_MAINTENANCE]);
+    if (path === `/v1/organizations/${ORG_A.id}/inventory-items`)
+      return Promise.resolve([ITEM_A]);
+    if (path === `/v1/organizations/${ORG_A.id}/warehouses?operational_only=true`)
+      return Promise.resolve([WH_A, WH_MAINTENANCE]);
+    if (path === `/v1/organizations/${ORG_A.id}/inventory-items?operational_only=true`)
+      return Promise.resolve([ITEM_A]);
+    if (path === `/v1/warehouses/${WH_A.id}/lots`) return Promise.resolve([LOT_A]);
+    if (path === `/v1/warehouses/${WH_MAINTENANCE.id}/lots`)
+      return Promise.resolve([LOT_MAINTENANCE]);
+    if (init?.method === 'POST') return Promise.resolve({ id: 'tx-new' });
+    return Promise.resolve([]);
+  });
+}
+
+async function selectMaintenanceWarehouse() {
+  await switchTab('lots');
+  const warehouseSelector = (await screen.findByTestId(
+    'inv-lots-warehouse',
+  )) as HTMLSelectElement;
+  fireEvent.change(warehouseSelector, { target: { value: WH_MAINTENANCE.id } });
+  await waitFor(() => {
+    expect(warehouseSelector).toHaveValue(WH_MAINTENANCE.id);
+    expect(mockedApiFetch).toHaveBeenCalledWith(
+      `/v1/warehouses/${WH_MAINTENANCE.id}/lots`,
+    );
+  });
 }
 
 describe('/inventory workspace — authorization error handling', () => {
@@ -398,6 +444,120 @@ describe('/inventory workspace — authorization error handling', () => {
     expect(itemSelector).toHaveTextContent(ITEM_A.name);
     expect(itemSelector).not.toHaveTextContent(inactiveItem.name);
     expect(mockedApiFetch).not.toHaveBeenCalledWith(`/v1/warehouses/${closedWarehouse.id}/lots`);
+  });
+
+  it('allows a maintenance warehouse for receive', async () => {
+    mockMaintenanceLifecycleWorkspace();
+    render(<InventoryPage />);
+
+    await switchTab('receive');
+
+    const warehouseSelector = (await screen.findByTestId(
+      'inv-receive-warehouse',
+    )) as HTMLSelectElement;
+    expect(Array.from(warehouseSelector.options).map((option) => option.value)).toContain(
+      WH_MAINTENANCE.id,
+    );
+  });
+
+  it('blocks issue from a maintenance warehouse', async () => {
+    mockMaintenanceLifecycleWorkspace();
+    render(<InventoryPage />);
+    await selectMaintenanceWarehouse();
+    await switchTab('issue');
+
+    fireEvent.change(await screen.findByTestId('inv-issue-lot'), {
+      target: { value: LOT_MAINTENANCE.id },
+    });
+    fireEvent.change(screen.getByTestId('inv-issue-qty'), { target: { value: '1' } });
+    fireEvent.click(screen.getByTestId('inv-issue-submit'));
+
+    expect(screen.queryByTestId('inv-issue-confirm')).not.toBeInTheDocument();
+    expect(
+      mockedApiFetch.mock.calls.some(([path]) =>
+        String(path).endsWith('/inventory:issue'),
+      ),
+    ).toBe(false);
+  });
+
+  it('blocks transfer from a maintenance source warehouse', async () => {
+    mockMaintenanceLifecycleWorkspace();
+    render(<InventoryPage />);
+    await selectMaintenanceWarehouse();
+    await switchTab('transfer');
+
+    fireEvent.change(await screen.findByTestId('inv-transfer-lot'), {
+      target: { value: LOT_MAINTENANCE.id },
+    });
+    fireEvent.change(screen.getByTestId('inv-transfer-destination'), {
+      target: { value: WH_A.id },
+    });
+    fireEvent.change(screen.getByTestId('inv-transfer-qty'), { target: { value: '1' } });
+    fireEvent.click(screen.getByTestId('inv-transfer-submit'));
+
+    expect(
+      mockedApiFetch.mock.calls.some(([path]) =>
+        String(path).endsWith('/inventory:transfer'),
+      ),
+    ).toBe(false);
+  });
+
+  it('allows maintenance as a transfer destination while excluding the active source', async () => {
+    mockMaintenanceLifecycleWorkspace();
+    render(<InventoryPage />);
+    await switchTab('transfer');
+
+    const destination = (await screen.findByTestId(
+      'inv-transfer-destination',
+    )) as HTMLSelectElement;
+    const destinationIds = Array.from(destination.options).map((option) => option.value);
+    expect(destinationIds).toContain(WH_MAINTENANCE.id);
+    expect(destinationIds).not.toContain(WH_A.id);
+  });
+
+  it('allows an adjustment increase in a maintenance warehouse', async () => {
+    mockMaintenanceLifecycleWorkspace();
+    render(<InventoryPage />);
+    await selectMaintenanceWarehouse();
+    await switchTab('adjust');
+
+    fireEvent.change(await screen.findByTestId('inv-adjust-direction'), {
+      target: { value: 'increase' },
+    });
+    fireEvent.change(screen.getByTestId('inv-adjust-lot'), {
+      target: { value: LOT_MAINTENANCE.id },
+    });
+    fireEvent.change(screen.getByTestId('inv-adjust-qty'), { target: { value: '1' } });
+    fireEvent.change(screen.getByTestId('inv-adjust-reason'), {
+      target: { value: 'Maintenance reconciliation increase' },
+    });
+    fireEvent.click(screen.getByTestId('inv-adjust-submit'));
+
+    expect(screen.getByTestId('inv-adjust-confirm')).toBeInTheDocument();
+  });
+
+  it('blocks the default adjustment decrease in a maintenance warehouse', async () => {
+    mockMaintenanceLifecycleWorkspace();
+    render(<InventoryPage />);
+    await selectMaintenanceWarehouse();
+    await switchTab('adjust');
+
+    expect(await screen.findByTestId('inv-adjust-direction')).toHaveValue('decrease');
+    fireEvent.change(screen.getByTestId('inv-adjust-lot'), {
+      target: { value: LOT_MAINTENANCE.id },
+    });
+    fireEvent.change(screen.getByTestId('inv-adjust-qty'), { target: { value: '1' } });
+    fireEvent.change(screen.getByTestId('inv-adjust-reason'), {
+      target: { value: 'Maintenance reconciliation decrease' },
+    });
+    fireEvent.click(screen.getByTestId('inv-adjust-submit'));
+
+    expect(screen.queryByTestId('inv-adjust-confirm')).not.toBeInTheDocument();
+    expect(
+      mockedApiFetch.mock.calls.some(([path]) =>
+        String(path).endsWith('/inventory:adjust'),
+      ),
+    ).toBe(false);
   });
 
   it('keeps inactive-item lots identifiable in reporting but out of stock operations', async () => {
