@@ -83,6 +83,13 @@ const WH_2: ItemWarehouse = {
   name: 'Warehouse Two',
   status: 'active',
 };
+const WH_MAINTENANCE: ItemWarehouse = {
+  id: 'wh-maintenance',
+  organization_id: ORG_A.id,
+  code: 'MAINT',
+  name: 'Maintenance Warehouse',
+  status: 'maintenance',
+};
 
 const ITEM: InventoryItem = {
   id: 'item-1',
@@ -108,6 +115,13 @@ const LOT_1: ItemLot = {
   expiry_date: null,
   balance: '50',
   balance_unit: 'kg',
+} as ItemLot;
+
+const LOT_MAINTENANCE: ItemLot = {
+  ...LOT_1,
+  id: 'lot-maintenance',
+  warehouse_id: WH_MAINTENANCE.id,
+  lot_code: 'MAINT-LOT',
 } as ItemLot;
 
 function deferred<T>() {
@@ -243,6 +257,14 @@ describe('StockOperationDialog — receive', () => {
   });
   afterEach(() => vi.clearAllMocks());
 
+  it('offers a maintenance warehouse for receive', async () => {
+    await primeDetailPage({ warehouses: [WH_1, WH_MAINTENANCE] });
+
+    fireEvent.click(screen.getByTestId('item-detail-stock-receive'));
+
+    expect(screen.getByRole('option', { name: WH_MAINTENANCE.name })).toBeInTheDocument();
+  });
+
   it('valid receipt submits the correct payload + fresh Idempotency-Key + refreshes', async () => {
     await primeDetailPage();
     fireEvent.click(screen.getByTestId('item-detail-stock-receive'));
@@ -350,6 +372,14 @@ describe('StockOperationDialog — issue', () => {
     window.history.replaceState({}, '', '/');
   });
   afterEach(() => vi.clearAllMocks());
+
+  it('does not offer a maintenance warehouse for issue', async () => {
+    await primeDetailPage({ warehouses: [WH_1, WH_MAINTENANCE] });
+
+    fireEvent.click(screen.getByTestId('item-detail-stock-issue'));
+
+    expect(screen.queryByRole('option', { name: WH_MAINTENANCE.name })).not.toBeInTheDocument();
+  });
 
   it('insufficient-stock 422 surfaces at the quantity field', async () => {
     await primeDetailPage();
@@ -551,6 +581,30 @@ describe('StockOperationDialog — transfer', () => {
   });
   afterEach(() => vi.clearAllMocks());
 
+  it('does not offer a maintenance warehouse as a transfer source', async () => {
+    await primeDetailPage({ warehouses: [WH_1, WH_MAINTENANCE] });
+
+    fireEvent.click(screen.getByTestId('item-detail-stock-transfer'));
+
+    const source = screen.getByTestId('stock-op-transfer-warehouse') as HTMLSelectElement;
+    expect(Array.from(source.options).map((option) => option.value)).not.toContain(
+      WH_MAINTENANCE.id,
+    );
+  });
+
+  it('offers a maintenance warehouse as a transfer destination from an active source', async () => {
+    await primeDetailPage({ warehouses: [WH_1, WH_MAINTENANCE] });
+    fireEvent.click(screen.getByTestId('item-detail-stock-transfer'));
+    fireEvent.change(screen.getByTestId('stock-op-transfer-warehouse'), {
+      target: { value: WH_1.id },
+    });
+
+    const destination = screen.getByTestId('stock-op-transfer-destination') as HTMLSelectElement;
+    expect(Array.from(destination.options).map((option) => option.value)).toContain(
+      WH_MAINTENANCE.id,
+    );
+  });
+
   it('excludes source warehouse from destination options', async () => {
     await primeDetailPage();
     fireEvent.click(screen.getByTestId('item-detail-stock-transfer'));
@@ -646,6 +700,45 @@ describe('StockOperationDialog — adjust', () => {
     window.history.replaceState({}, '', '/');
   });
   afterEach(() => vi.clearAllMocks());
+
+  it('offers a maintenance warehouse for an adjustment increase', async () => {
+    await primeDetailPage({ warehouses: [WH_1, WH_MAINTENANCE] });
+
+    fireEvent.click(screen.getByTestId('item-detail-stock-adjust'));
+
+    expect(screen.getByRole('option', { name: WH_MAINTENANCE.name })).toBeInTheDocument();
+  });
+
+  it('cannot retain a maintenance warehouse and lot when adjustment changes to decrease', async () => {
+    await primeDetailPage({
+      warehouses: [WH_1, WH_MAINTENANCE],
+      lots: [LOT_1, LOT_MAINTENANCE],
+    });
+    fireEvent.click(screen.getByTestId('item-detail-stock-adjust'));
+    const warehouse = screen.getByTestId('stock-op-adjust-warehouse') as HTMLSelectElement;
+    fireEvent.change(warehouse, { target: { value: WH_MAINTENANCE.id } });
+    const lot = screen.getByTestId('stock-op-adjust-lot') as HTMLSelectElement;
+    fireEvent.change(lot, { target: { value: LOT_MAINTENANCE.id } });
+
+    expect(warehouse).toHaveValue(WH_MAINTENANCE.id);
+    expect(lot).toHaveValue(LOT_MAINTENANCE.id);
+
+    fireEvent.click(screen.getByTestId('stock-op-adjust-direction-decrease'));
+
+    expect
+      .soft(Array.from(warehouse.options).map((option) => option.value))
+      .not.toContain(WH_MAINTENANCE.id);
+    expect.soft(warehouse).not.toHaveValue(WH_MAINTENANCE.id);
+    expect.soft(lot).not.toHaveValue(LOT_MAINTENANCE.id);
+
+    fireEvent.change(screen.getByTestId('stock-op-adjust-quantity'), { target: { value: '1' } });
+    fireEvent.change(screen.getByTestId('stock-op-adjust-reason'), {
+      target: { value: 'maintenance decrease must be blocked' },
+    });
+    fireEvent.click(screen.getByTestId('stock-op-adjust-submit'));
+
+    expect(screen.queryByTestId('stock-op-adjust-confirm')).not.toBeInTheDocument();
+  });
 
   it('blocks submission when quantity is invalid (zero, negative, non-numeric)', async () => {
     await primeDetailPage();
