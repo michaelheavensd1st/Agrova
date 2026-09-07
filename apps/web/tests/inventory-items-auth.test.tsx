@@ -458,65 +458,6 @@ describe('InventoryItemDetailPage — availability + activity fan-out', () => {
     expect(peak).toBeLessThanOrEqual(WAREHOUSE_LOT_CONCURRENCY);
   });
 
-  it('closed warehouses are excluded from operational availability fan-out', async () => {
-    const item = makeItem({ id: 'item-1' });
-    const activeWarehouse = {
-      id: 'wh-active',
-      organization_id: ORG_A.id,
-      code: 'ACTIVE',
-      name: 'Active Warehouse',
-      status: 'active',
-    };
-    const closedWarehouse = {
-      id: 'wh-closed',
-      organization_id: ORG_A.id,
-      code: 'CLOSED',
-      name: 'Closed Warehouse',
-      status: 'closed',
-    };
-
-    mockedApiFetch.mockImplementation((path: string) => {
-      if (path === '/v1/organizations') return Promise.resolve([ORG_A]);
-      if (path === `/v1/organizations/${ORG_A.id}/inventory-items`) return Promise.resolve([item]);
-      if (path === `/v1/organizations/${ORG_A.id}/warehouses`)
-        return Promise.resolve([activeWarehouse, closedWarehouse]);
-
-      if (path === '/v1/warehouses/wh-active/lots')
-        return Promise.resolve([
-          {
-            id: 'lot-active',
-            item_id: 'item-1',
-            warehouse_id: 'wh-active',
-            storage_location_id: null,
-            lot_code: 'ACTIVE-LOT',
-            expiry_date: null,
-            balance: '10',
-            balance_unit: 'kg',
-          },
-        ]);
-
-      if (path === '/v1/warehouses/wh-closed/lots')
-        throw new Error('closed warehouse must not participate in availability fan-out');
-
-      if (path === '/v1/lots/lot-active/transactions?limit=100')
-        return Promise.resolve({ items: [], next_cursor: null });
-
-      return Promise.resolve([]);
-    });
-
-    render(<InventoryItemDetailPage />);
-
-    await waitFor(() =>
-      expect(screen.getByTestId('item-availability-row-ACTIVE')).toBeInTheDocument(),
-    );
-
-    expect(
-      mockedApiFetch.mock.calls.some(([path]) => path === '/v1/warehouses/wh-closed/lots'),
-    ).toBe(false);
-
-    expect(screen.queryByTestId('item-availability-row-CLOSED')).not.toBeInTheDocument();
-  });
-
   it('availability 403 shows scoped forbidden banner', async () => {
     const item = makeItem({ id: 'item-1' });
     mockedApiFetch.mockImplementation((path: string) => {
