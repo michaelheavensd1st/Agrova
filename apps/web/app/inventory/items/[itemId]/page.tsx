@@ -287,10 +287,17 @@ function InventoryItemDetailInner() {
     }
   }, [orgId, itemId, handleAuthError]);
 
-  // Availability fan-out (bounded 5): fetch lots per warehouse,
-  // then keep only lots that reference this item.
+  const operationalWarehouses = useMemo(
+    () => warehouses.filter((warehouse) => warehouse.status !== 'closed'),
+    [warehouses],
+  );
+
+  // Availability fan-out (bounded 5): fetch lots only from operational
+  // warehouses, then keep only lots that reference this item. Closed
+  // warehouses remain discoverable administratively but must not feed
+  // operational item availability or stock-operation state.
   const loadAvailability = useCallback(async () => {
-    if (!item || warehouses.length === 0) {
+    if (!item || operationalWarehouses.length === 0) {
       setLots([]);
       setAvailabilityPartial(false);
       return;
@@ -303,8 +310,10 @@ function InventoryItemDetailInner() {
       capturedOrgId === currentOrgIdRef.current &&
       capturedItemId === currentItemIdRef.current;
     try {
-      const settled = await mapWithConcurrency(warehouses, WAREHOUSE_LOT_CONCURRENCY, (wh) =>
-        apiFetch<ItemLot[]>(`/v1/warehouses/${wh.id}/lots`),
+      const settled = await mapWithConcurrency(
+        operationalWarehouses,
+        WAREHOUSE_LOT_CONCURRENCY,
+        (wh) => apiFetch<ItemLot[]>(`/v1/warehouses/${wh.id}/lots`),
       );
       if (!isCurrent()) return;
       const outcome = inspectWarehouseLotFanOut(settled, apiErrorStatus);
@@ -329,7 +338,7 @@ function InventoryItemDetailInner() {
       // mapWithConcurrency itself never throws; keep the block for
       // future robustness.
     }
-  }, [item, warehouses, orgId, router]);
+  }, [item, operationalWarehouses, orgId, router]);
 
   // Activity fan-out (bounded 5) over the lots that reference
   // this item. Never over the full org's lots. Each per-lot
@@ -422,18 +431,13 @@ function InventoryItemDetailInner() {
     if (!item) return [];
     return buildItemAvailability({
       item,
-      warehouses,
+      warehouses: operationalWarehouses,
       lots,
       nowIso: new Date().toISOString(),
     });
-  }, [item, warehouses, lots]);
+  }, [item, operationalWarehouses, lots]);
 
   const warehousesById = useMemo(() => new Map(warehouses.map((w) => [w.id, w])), [warehouses]);
-
-  const operationalWarehouses = useMemo(
-    () => warehouses.filter((warehouse) => warehouse.status !== 'closed'),
-    [warehouses],
-  );
 
   const activeOrg = useMemo(() => orgs?.find((o) => o.id === orgId) ?? null, [orgs, orgId]);
 
