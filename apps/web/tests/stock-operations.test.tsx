@@ -599,9 +599,7 @@ describe('StockOperationDialog — transfer', () => {
       target: { value: WH_1.id },
     });
 
-    const destination = screen.getByTestId(
-      'stock-op-transfer-destination',
-    ) as HTMLSelectElement;
+    const destination = screen.getByTestId('stock-op-transfer-destination') as HTMLSelectElement;
     expect(Array.from(destination.options).map((option) => option.value)).toContain(
       WH_MAINTENANCE.id,
     );
@@ -727,9 +725,9 @@ describe('StockOperationDialog — adjust', () => {
 
     fireEvent.click(screen.getByTestId('stock-op-adjust-direction-decrease'));
 
-    expect.soft(Array.from(warehouse.options).map((option) => option.value)).not.toContain(
-      WH_MAINTENANCE.id,
-    );
+    expect
+      .soft(Array.from(warehouse.options).map((option) => option.value))
+      .not.toContain(WH_MAINTENANCE.id);
     expect.soft(warehouse).not.toHaveValue(WH_MAINTENANCE.id);
     expect.soft(lot).not.toHaveValue(LOT_MAINTENANCE.id);
 

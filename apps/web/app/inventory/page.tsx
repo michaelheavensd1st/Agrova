@@ -1277,10 +1277,7 @@ function ReceivePanel({
       return;
     }
     const selectedWarehouse = warehouses.find((warehouse) => warehouse.id === selectedWh);
-    if (
-      !selectedWarehouse ||
-      !isWarehouseEligibleForStockOperation(selectedWarehouse, 'receive')
-    ) {
+    if (!selectedWarehouse || !isWarehouseEligibleForStockOperation(selectedWarehouse, 'receive')) {
       toast('Selected warehouse is not available for receiving stock.', 'error');
       return;
     }
@@ -1437,11 +1434,7 @@ function TxPanel({
   const [busy, setBusy] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState(false);
   const warehouseOperation =
-    mode === 'issue'
-      ? 'issue'
-      : direction === 'increase'
-        ? 'adjust-increase'
-        : 'adjust-decrease';
+    mode === 'issue' ? 'issue' : direction === 'increase' ? 'adjust-increase' : 'adjust-decrease';
   const warehouseEligible =
     warehouse !== null && isWarehouseEligibleForStockOperation(warehouse, warehouseOperation);
 

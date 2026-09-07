@@ -158,8 +158,7 @@ function mockMaintenanceLifecycleWorkspace() {
     if (path === '/v1/organizations') return Promise.resolve([ORG_A]);
     if (path === `/v1/organizations/${ORG_A.id}/warehouses`)
       return Promise.resolve([WH_A, WH_MAINTENANCE]);
-    if (path === `/v1/organizations/${ORG_A.id}/inventory-items`)
-      return Promise.resolve([ITEM_A]);
+    if (path === `/v1/organizations/${ORG_A.id}/inventory-items`) return Promise.resolve([ITEM_A]);
     if (path === `/v1/organizations/${ORG_A.id}/warehouses?operational_only=true`)
       return Promise.resolve([WH_A, WH_MAINTENANCE]);
     if (path === `/v1/organizations/${ORG_A.id}/inventory-items?operational_only=true`)
@@ -174,15 +173,11 @@ function mockMaintenanceLifecycleWorkspace() {
 
 async function selectMaintenanceWarehouse() {
   await switchTab('lots');
-  const warehouseSelector = (await screen.findByTestId(
-    'inv-lots-warehouse',
-  )) as HTMLSelectElement;
+  const warehouseSelector = (await screen.findByTestId('inv-lots-warehouse')) as HTMLSelectElement;
   fireEvent.change(warehouseSelector, { target: { value: WH_MAINTENANCE.id } });
   await waitFor(() => {
     expect(warehouseSelector).toHaveValue(WH_MAINTENANCE.id);
-    expect(mockedApiFetch).toHaveBeenCalledWith(
-      `/v1/warehouses/${WH_MAINTENANCE.id}/lots`,
-    );
+    expect(mockedApiFetch).toHaveBeenCalledWith(`/v1/warehouses/${WH_MAINTENANCE.id}/lots`);
   });
 }
 
@@ -474,9 +469,7 @@ describe('/inventory workspace — authorization error handling', () => {
 
     expect(screen.queryByTestId('inv-issue-confirm')).not.toBeInTheDocument();
     expect(
-      mockedApiFetch.mock.calls.some(([path]) =>
-        String(path).endsWith('/inventory:issue'),
-      ),
+      mockedApiFetch.mock.calls.some(([path]) => String(path).endsWith('/inventory:issue')),
     ).toBe(false);
   });
 
@@ -496,9 +489,7 @@ describe('/inventory workspace — authorization error handling', () => {
     fireEvent.click(screen.getByTestId('inv-transfer-submit'));
 
     expect(
-      mockedApiFetch.mock.calls.some(([path]) =>
-        String(path).endsWith('/inventory:transfer'),
-      ),
+      mockedApiFetch.mock.calls.some(([path]) => String(path).endsWith('/inventory:transfer')),
     ).toBe(false);
   });
 
@@ -554,9 +545,7 @@ describe('/inventory workspace — authorization error handling', () => {
 
     expect(screen.queryByTestId('inv-adjust-confirm')).not.toBeInTheDocument();
     expect(
-      mockedApiFetch.mock.calls.some(([path]) =>
-        String(path).endsWith('/inventory:adjust'),
-      ),
+      mockedApiFetch.mock.calls.some(([path]) => String(path).endsWith('/inventory:adjust')),
     ).toBe(false);
   });
 
