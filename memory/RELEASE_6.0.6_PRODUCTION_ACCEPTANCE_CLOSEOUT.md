@@ -324,16 +324,29 @@ At closeout:
 - No automatic volume-backup schedule was configured.
 - PITR was deliberately not enabled during closeout because enabling it would introduce an unrelated service redeployment.
 
-Historical application rollback anchor from the initial acceptance stage:
+Acceptance status and present rollback safety are distinct. The accepted production SHA and historical initial-acceptance anchor remain `48c236ac2e625f0ca18c0e7e7f9940327c2197e4`; the later lineage below is the current rollback-compatible application anchor and does not supersede that acceptance.
+
+Current rollback-compatible application anchor:
+
+- Deployment ID: `2944aba2-bf9b-4e04-b9f0-b9ea944b83c4`
+- Git SHA: `66bac60667df190c4cc2f704ed3d572d8828c90f`
+- Git branch: `develop`
+- Repository: `michaelheavensd1st/Agrovix`
+- Deployment status: `SUCCESS`
+- Running instance ID: `8b244f17-4b24-43b2-9255-5007a8acd3f2`
+
+This deployment contains the PR #41 receipt-fixture quarantine required while the preserved synthetic `100 kg` fixture balance remains in the production ledger. Any current application rollback while that fixture remains preserved must retain the PR #41 quarantine through the `66bac60667df190c4cc2f704ed3d572d8828c90f` lineage or an independently verified equivalent operational exclusion.
+
+Historical initial-acceptance deployment evidence:
 
 - Deployment ID: `19028a58-3e26-4e11-95c4-1c44a142c610`
 - Git SHA: `48c236ac2e625f0ca18c0e7e7f9940327c2197e4`
 - Git branch: `develop`
 - Repository: `michaelheavensd1st/Agrovix`
 
-The production application code remained on the exact UAT-approved SHA. A subsequent configuration-only redeployment was performed to apply the corrected transactional-email sender configuration; in-container verification after that redeployment confirmed `RAILWAY_GIT_COMMIT_SHA=48c236ac2e625f0ca18c0e7e7f9940327c2197e4` and `RAILWAY_GIT_BRANCH=develop`. No application-code change was introduced by that configuration redeployment.
+The production application code remained on the exact UAT-approved SHA at initial acceptance. A subsequent configuration-only redeployment was performed to apply the corrected transactional-email sender configuration; in-container verification after that redeployment confirmed `RAILWAY_GIT_COMMIT_SHA=48c236ac2e625f0ca18c0e7e7f9940327c2197e4` and `RAILWAY_GIT_BRANCH=develop`. No application-code change was introduced by that configuration redeployment.
 
-Deployment `19028a58-3e26-4e11-95c4-1c44a142c610` is retained here only as historical rollback evidence; it is no longer the active production deployment. The current active deployment is recorded in Section 5.
+Deployment `19028a58-3e26-4e11-95c4-1c44a142c610` predates the PR #41 operational quarantine and remains historical initial-acceptance evidence. It is not presently a safe application rollback target while the synthetic receipt fixture remains preserved unless the PR #41 exclusion is restored or an equivalent operational exclusion is independently verified.
 
 ## 7. Railway platform stability gate
 
