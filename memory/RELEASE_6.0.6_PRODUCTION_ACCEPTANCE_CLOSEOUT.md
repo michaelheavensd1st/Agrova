@@ -3,7 +3,7 @@
 **Closeout date:** 2026-09-01 (WAT)  
 **Repository:** `michaelheavensd1st/Agrovix`  
 **Release branch:** `develop`  
-**Current accepted production SHA:** `66bac60667df190c4cc2f704ed3d572d8828c90f`
+**Accepted production SHA:** `48c236ac2e625f0ca18c0e7e7f9940327c2197e4`
 **Alembic head:** `0015_aqua_transfer_integrity`
 
 **Production runtime verification:** 2026-09-05 (UTC)
@@ -13,9 +13,9 @@
 
 **PRODUCTION ACCEPTED / FUNCTIONAL UAT CLOSED.**
 
-Release 6.0.6 passed the functional UAT and production-acceptance gates described below. The initial 2026-09-01 acceptance used Git SHA `48c236ac2e625f0ca18c0e7e7f9940327c2197e4`. Production runtime verification now passes on the PR #41 source commit `66bac60667df190c4cc2f704ed3d572d8828c90f` after the receipt-fixture dashboard quarantine was merged, the fixture was operationally retired, and the canonical production frontend was rebuilt with its Production-only API proxy target corrected.
+Release 6.0.6 passed the functional UAT and production-acceptance gates described below on the accepted production SHA `48c236ac2e625f0ca18c0e7e7f9940327c2197e4`. Subsequent production runtime/quarantine verification passed on PR #41 source commit `66bac60667df190c4cc2f704ed3d572d8828c90f` after the receipt-fixture dashboard quarantine was merged and the production receipt fixture was operationally retired. The same later source SHA was also attributed by deployment metadata to the separately deployed frontend build used for isolated release-UAT browser receipt acceptance; it does not replace the accepted production SHA.
 
-Production acceptance and quarantine runtime verification are complete and PASS. Documentation closeout in PR #39 remains pending review; this report does not resolve or represent resolution of any PR #39 review thread. Production frontend validation is established as recorded in Section 8. This acceptance does not waive the remaining non-blocking technical debt recorded in Section 9.
+Production acceptance, quarantine runtime verification, and the isolated deployed-browser receipt gate are complete and PASS. Documentation closeout in PR #39 remains pending review; this report does not resolve or represent resolution of any PR #39 review thread. As qualified in Section 8, a distinct dedicated production frontend/domain was not established. This acceptance does not waive the remaining non-blocking technical debt recorded in Section 9.
 
 ## 2. Canonical release baseline
 
@@ -35,14 +35,16 @@ Recent remediation lineage included:
 - PR #38 — `fix(web): expose purchase orders from organization hub`
 - PR #38 merge commit was the initial accepted release SHA.
 
-The canonical accepted and deployed production baseline subsequently became:
+Subsequent production runtime/quarantine verification used:
 
 - Branch: `develop`
-- Git SHA: `66bac60667df190c4cc2f704ed3d572d8828c90f`
+- Runtime verification Git SHA: `66bac60667df190c4cc2f704ed3d572d8828c90f`
 - Lineage: accepted PR #41 source — `fix(inventory): enforce receipt fixture quarantine`
 - Railway production deployment: `SUCCESS` with a `RUNNING` instance
-- Canonical Vercel production frontend: `https://agrovix-web.vercel.app`
+- Vercel deployment used for subsequent production runtime verification: `https://agrovix-web.vercel.app`
 - Alembic: exactly one head, `0015_aqua_transfer_integrity`
+
+This subsequent runtime verification SHA does not supersede the Release 6.0.6 accepted production SHA `48c236ac2e625f0ca18c0e7e7f9940327c2197e4`.
 
 ## 3. UAT remediation and acceptance evidence
 
@@ -147,6 +149,47 @@ Post-completion protection:
 
 This closes the API-level Purchase Receipt posting gate, including inventory-lot creation, inventory-transaction creation, partial and full receipt transitions, replay safety, conflicting replay rejection, and terminal over-receipt protection.
 
+### Deterministic deployed-browser Purchase Receipt idempotency and recovery
+
+PASS — `BROWSER_RECEIPT_IDEMPOTENCY_UAT=PASS`.
+
+This was a subsequent, isolated browser acceptance test against the Railway release-UAT API, distinct from the production API receipt test above. The deployed frontend was `https://agrovix-cqkncdkmc-commander-dons-projects.vercel.app`, attributed by deployment metadata to exact source SHA `66bac60667df190c4cc2f704ed3d572d8828c90f`, and reached `https://agrovix-api-amused-ambition-release-uat.up.railway.app` through `/api-proxy`. Release-UAT `alembic current` and `alembic heads` were independently verified as exactly `0015_aqua_transfer_integrity (head)`. Runtime `/version` reported environment `staging` and `git_commit` as unknown, so the source-SHA attribution is from deployment metadata rather than the runtime field.
+
+The isolated organization `d2f6442a-b525-40cd-b640-8e7c1a261039` remains active. Creator/admin Actor A and a distinct organization-scoped, non-superuser approver Actor B were used. Purchase Order `39803bb3-a8aa-4688-a96a-c3273088b5d7` (`PO-2026-000001`) was independently approved before receipt. Its line `59a670c7-33eb-42f4-9042-7820208be6b2` ordered `2.000000 kg` and had received `0.000000 kg` before the test. The browser service-worker count was `0`; the initial receipt count and exact test-lot count were also both `0`.
+
+For browser lot code `R606-BROWSER-IDEMPOTENCY-001`, the deterministic recovery sequence proved:
+
+- The browser submitted receipt POST #1. Its exact request was intercepted with Idempotency-Key SHA-256 `8c3af9338a0dd8c52418544f27467dae2b36d4bcca8aeefb2767c7f96dfbfbb9` and request-body SHA-256 `9500c8a8f75f01ae6cdd8bb7e91672726d00465673eebe97e3903eb7af33837d`.
+- That exact browser request was forwarded upstream once. The upstream returned HTTP `201` and committed receipt `15a240bb-99fb-4c00-9882-590525988178`, GRN `GRN-2026-000001`, inventory lot `78577061-f84e-4240-be5e-eb89069ed507`, and inventory transaction `576381ce-0210-4006-a64a-cf7807a3a176`.
+- After the upstream commit, the page-facing response was deliberately aborted to reproduce an ambiguous network result. The browser displayed the application's ambiguous-result state.
+- Before retry, independent read-only verification proved exactly one matching receipt, one matching lot, and one matching transaction, with a `1.000000 kg` lot balance.
+- The browser exposed **Retry same receipt**. Receipt POST #2 had exactly the same Idempotency-Key SHA-256 and request-body SHA-256 as POST #1.
+- The retry returned HTTP `200` with `X-Idempotent-Replay: true`. The browser displayed: “This receipt was already recorded. Current data has been refreshed.”
+- Final verification proved exactly one matching receipt, one matching lot, one matching transaction, exactly one total transaction for the lot, and a `1.000000 kg` lot balance after two total browser receipt POSTs.
+- The Purchase Order intentionally remained `PARTIALLY_RECEIVED`; its line's final `received_quantity` was `1.000000`. It was neither fully received nor cancelled.
+
+This establishes a real first commit, an ambiguous browser result, exactly-once state before retry, an exact-same-request retry, an idempotent replay response, browser replay acknowledgement, and final absence of duplicate receipt, lot, or transaction state.
+
+### Deployed-browser GRN and immutable history proof
+
+PASS — `FINAL_BROWSER_GRN_RECEIPT_PROOF=PASS`.
+
+A subsequent read-only proof through the same deployed browser established receipt GET HTTP `200`, `receipt.grn = GRN-2026-000001`, the exact GRN visible in Purchase Receipt history, successful opening of the GRN detail, and the immutable-history text “Posted receipts are immutable.”
+
+### Isolated browser-UAT fixture retirement and preservation
+
+PASS — `RETIREMENT_STATE=PASS`, `IMMUTABLE_RECEIPT_CHAIN=PASS`, and `POST_RETIREMENT_VERIFICATION=PASS`.
+
+After the browser gate passed, only the disposable operational components were retired through three HTTP `200` mutations:
+
+- Warehouse `141dee5f-032f-4516-b83e-bb48f6e2fd8f` / `R606_BROWSER_WH`: final status `closed`.
+- Inventory item `73476ee4-3d25-4d05-9dcd-41e58596c956` / `R606-BROWSER-FEED`: final `is_active = false`.
+- Supplier `db2360a1-e44a-469d-bfa4-c70b0cbd3bf2` / `R606-BROWSER-SUPPLIER`: deactivated with reason `Release 6.0.6 isolated browser receipt UAT fixture retirement`.
+
+Independent post-retirement read-only verification proved the warehouse remains in the complete administrative/read set but is excluded with `operational_only=true`; the inactive item is likewise excluded with `operational_only=true`; and the supplier deactivation timestamp is populated with its reason preserved exactly. The organization remains active.
+
+No receipt, lot, or transaction deletion and no compensating inventory adjustment occurred. Receipt `15a240bb-99fb-4c00-9882-590525988178`, GRN `GRN-2026-000001`, lot `78577061-f84e-4240-be5e-eb89069ed507` with balance `1.000000 kg`, and transaction `576381ce-0210-4006-a64a-cf7807a3a176` still exist. Purchase Order `39803bb3-a8aa-4688-a96a-c3273088b5d7` remains `PARTIALLY_RECEIVED`, and line `59a670c7-33eb-42f4-9042-7820208be6b2` remains received at `1.000000`. Receipt, GRN, lot, transaction, transition, and audit evidence remain preserved.
+
 ### Production receipt-fixture inventory isolation
 
 PASS.
@@ -207,97 +250,13 @@ Authenticated requests to `https://api-staging.aegisfarm.com` established the ad
 
 This proves the historical administrative records remain preserved while the retired fixture is excluded from operational API projections.
 
-### Isolated release-UAT deployed-browser receipt idempotency and recovery
-
-PASS.
-
-The previously outstanding browser-level receipt idempotency/recovery behavior was subsequently validated against the exact deployed frontend build at Git SHA `66bac60667df190c4cc2f704ed3d572d8828c90f`, using the Vercel deployment `https://agrovix-cqkncdkmc-commander-dons-projects.vercel.app` connected through `/api-proxy` to the isolated Railway release-UAT API at `https://agrovix-api-amused-ambition-release-uat.up.railway.app`.
-
-This browser evidence is intentionally distinct from the production API acceptance fixture above. The browser test ran against the isolated release-UAT environment, not against the production database or a separately established production frontend/domain. Release-UAT Alembic state was independently verified as exactly `0015_aqua_transfer_integrity (head)` for both `alembic current` and `alembic heads`. Runtime `/version` reported the staging environment and `git_commit = unknown`; the frontend SHA attribution therefore comes from deployment metadata rather than the runtime version payload.
-
-Controlled isolated browser fixture:
-
-- Organization ID: `d2f6442a-b525-40cd-b640-8e7c1a261039`
-- Organization retained active after testing.
-- Purchase Order ID: `39803bb3-a8aa-4688-a96a-c3273088b5d7`
-- Purchase Order number: `PO-2026-000001`
-- Purchase Order line ID: `59a670c7-33eb-42f4-9042-7820208be6b2`
-- Ordered quantity: `2.000000 kg`
-- Separate creator/admin and organization-scoped non-superuser approver actors were used.
-- Pre-mutation state: `APPROVED`, `0.000000 kg` received, zero receipts, and zero matching test lots.
-- Test lot code: `R606-BROWSER-IDEMPOTENCY-001`
-- Service worker count: `0`
-
-Deterministic browser idempotency/recovery proof:
-
-- Browser receipt POST #1 used idempotency-key SHA-256 `8c3af9338a0dd8c52418544f27467dae2b36d4bcca8aeefb2767c7f96dfbfbb9`.
-- Browser receipt POST #1 request-body SHA-256 was `9500c8a8f75f01ae6cdd8bb7e91672726d00465673eebe97e3903eb7af33837d`.
-- The exact browser request was forwarded upstream once and returned HTTP `201`.
-- Receipt ID: `15a240bb-99fb-4c00-9882-590525988178`
-- GRN: `GRN-2026-000001`
-- Inventory lot ID: `78577061-f84e-4240-be5e-eb89069ed507`
-- Inventory transaction ID: `576381ce-0210-4006-a64a-cf7807a3a176`
-- After the upstream commit, the page-facing response was deliberately aborted to reproduce an ambiguous network result.
-- The browser displayed the application's uncertain-result state and exposed `Retry same receipt`.
-- Independent read-only verification before retry proved exactly one matching receipt, one matching lot, one matching inventory transaction, and a `1.000000 kg` lot balance.
-- Browser receipt POST #2 used exactly the same idempotency-key SHA-256 and exactly the same request-body SHA-256.
-- Retry returned HTTP `200` with `X-Idempotent-Replay: true`.
-- The browser displayed `This receipt was already recorded. Current data has been refreshed.`
-- Final verification again proved exactly one receipt, one lot, one transaction, one total transaction for the lot, and a `1.000000 kg` balance.
-- Final Purchase Order state: `PARTIALLY_RECEIVED`.
-- Final Purchase Order line `received_quantity`: `1.000000`.
-- Total browser receipt POSTs: `2`.
-
-Result: `BROWSER_RECEIPT_IDEMPOTENCY_UAT=PASS`.
-
-### Deployed-browser GRN and immutable receipt-history proof
-
-PASS.
-
-A subsequent read-only browser verification confirmed:
-
-- Receipt GET returned HTTP `200`.
-- `receipt.grn` was exactly `GRN-2026-000001`.
-- The exact GRN was visible in Purchase Receipt history.
-- The GRN detail view opened successfully.
-- The browser displayed `Posted receipts are immutable.`
-
-Result: `FINAL_BROWSER_GRN_RECEIPT_PROOF=PASS`.
-
-### Isolated browser-UAT fixture retirement and preservation
-
-PASS.
-
-After the browser acceptance gate closed, only the disposable operational components of the isolated release-UAT fixture were retired:
-
-- Warehouse `141dee5f-032f-4516-b83e-bb48f6e2fd8f` (`R606_BROWSER_WH`) was changed to status `closed`.
-- Inventory item `73476ee4-3d25-4d05-9dcd-41e58596c956` (`R606-BROWSER-FEED`) was changed to `is_active = false`.
-- Supplier `db2360a1-e44a-469d-bfa4-c70b0cbd3bf2` (`R606-BROWSER-SUPPLIER`) was deactivated with reason `Release 6.0.6 isolated browser receipt UAT fixture retirement`.
-- All three retirement mutations returned HTTP `200`.
-
-Independent post-retirement read-only verification proved:
-
-- The closed warehouse remains present in the complete read set and is excluded when `operational_only=true`.
-- The inactive inventory item remains present in the complete read set and is excluded when `operational_only=true`.
-- Supplier `deactivated_at` is populated and the deactivation reason is preserved.
-- Receipt `15a240bb-99fb-4c00-9882-590525988178` remains present.
-- GRN remains `GRN-2026-000001`.
-- Inventory lot `78577061-f84e-4240-be5e-eb89069ed507` remains present with balance `1.000000 kg`.
-- Inventory transaction `576381ce-0210-4006-a64a-cf7807a3a176` remains present.
-- The Purchase Order remains `PARTIALLY_RECEIVED`.
-- The Purchase Order line remains at `received_quantity = 1.000000`.
-- The organization remains active.
-- Receipt, lot, transaction, transition, and audit evidence were not destructively deleted or neutralized.
-
-Results: `RETIREMENT_STATE=PASS`, `IMMUTABLE_RECEIPT_CHAIN=PASS`, and `POST_RETIREMENT_VERIFICATION=PASS`.
-
 ## 4. Release-UAT deployment verification
 
 Railway release-UAT API health returned HTTP `200` with Redis-backed rate limiting healthy.
 
 Version endpoint reported the staging environment and `/api/v1` prefix.
 
-The exact accepted SHA had successful Railway and Vercel deployment statuses.
+The accepted production SHA `48c236ac2e625f0ca18c0e7e7f9940327c2197e4` had successful Railway and Vercel deployment statuses during the initial release-UAT verification.
 
 Inside the release-UAT Railway container:
 
@@ -305,7 +264,11 @@ Inside the release-UAT Railway container:
 - `alembic current`: `0015_aqua_transfer_integrity (head)`
 - `alembic heads`: `0015_aqua_transfer_integrity (head)`
 
-Browser validation included the earlier Purchase Orders navigation smoke test and the later deterministic deployed-browser receipt idempotency/recovery test. The latter used the exact Vercel frontend build at SHA `66bac60667df190c4cc2f704ed3d572d8828c90f` connected through `/api-proxy` to the isolated Railway release-UAT API. The browser test proved a real first receipt commit, an intentionally ambiguous page-facing result, exact same-request retry, HTTP `200` idempotent replay, browser replay acknowledgement, and no duplicate receipt, lot, or inventory transaction.
+The historically valid browser smoke validation on the canonical Vercel `develop` Preview confirmed the organization-scoped Purchase Orders page loaded the expected UAT records without a visible frontend error.
+
+The later deterministic receipt acceptance used deployed frontend `https://agrovix-cqkncdkmc-commander-dons-projects.vercel.app`, attributed by deployment metadata to exact source SHA `66bac60667df190c4cc2f704ed3d572d8828c90f`. Through `/api-proxy`, it exercised the Railway release-UAT API at `https://agrovix-api-amused-ambition-release-uat.up.railway.app`, whose Alembic current and heads were independently verified as exactly `0015_aqua_transfer_integrity (head)`. Runtime `/version` reported environment `staging` and `git_commit` unknown; it was not the source of the SHA attribution.
+
+As detailed in Section 3, the deployed browser proved a real first receipt commit followed by a deliberately ambiguous page-facing result, exact same-request retry, HTTP `200` idempotent replay, browser replay acknowledgement, and exactly one preserved receipt/GRN/lot/transaction chain. `BROWSER_RECEIPT_IDEMPOTENCY_UAT=PASS` and `FINAL_BROWSER_GRN_RECEIPT_PROOF=PASS` close the deployed-browser Purchase Receipt behavior gate for the frontend build used in this successful verification against isolated release-UAT. This does not claim that the Phase 2 browser test ran against production.
 
 ## 5. Production preflight and database state
 
@@ -380,9 +343,9 @@ Railway's status report subsequently marked the incident **Resolved**, stating t
 
 ## 8. Frontend production verification
 
-At initial acceptance on 2026-09-01, browser validation used the canonical Vercel `develop` Preview and did not establish a separately identified production frontend/domain. That historical qualification is superseded by the final production verification below.
+At initial acceptance on 2026-09-01, browser validation used the canonical Vercel `develop` Preview. A distinct dedicated production frontend/domain was not established, and that qualification remains. The later deterministic Phase 2 browser receipt test also did not run against production: it used the SHA-`66bac606…` deployed frontend identified in Section 4 against isolated Railway release-UAT.
 
-The canonical production frontend is `https://agrovix-web.vercel.app`. It was rebuilt from the same accepted PR #41 source commit after correcting the Production-only `API_PROXY_TARGET` to `https://api-staging.aegisfarm.com`:
+Separately, `https://agrovix-web.vercel.app` was rebuilt from PR #41 source commit `66bac60667df190c4cc2f704ed3d572d8828c90f` after correcting the Production-only `API_PROXY_TARGET` to `https://api-staging.aegisfarm.com`:
 
 - Project: `agrovix-web`
 - Project ID: `prj_SKigjKdu1pdn3AqJmHuRz55ppPZV`
@@ -398,7 +361,9 @@ The repaired `/api-proxy` reaches Railway, and authenticated browser login succe
 - Out of stock: `0`
 - Needs attention: `0 lots`
 
-These runtime results establish that the closed UAT warehouse, inactive UAT item, two historical receipt lots, and synthetic `100 kg` are excluded from the operational dashboard projection while their historical and administrative records remain preserved. Production acceptance and quarantine runtime verification therefore PASS on the accepted PR #41 source commit.
+These runtime results establish that the closed production-acceptance UAT warehouse, inactive item, two historical receipt lots, and synthetic `100 kg` are excluded from the operational dashboard projection while their historical and administrative records remain preserved. Production quarantine runtime verification therefore passes on the PR #41 source commit. This evidence does not establish a distinct dedicated production frontend/domain.
+
+The frontend build used for the successful release-UAT verification has deterministic deployed-browser receipt idempotency/recovery and immutable-GRN-history validation against isolated release-UAT, as recorded in Sections 3 and 4. That closes the receipt behavior gate for the build without conflating release-UAT browser validation with dedicated production-domain validation.
 
 Slash normalization remains a separate nonblocking finding: `/api-proxy/v1/version` returned HTTP `307` with `Location: http://api-staging.aegisfarm.com/api/v1/version/`. This did not prevent the repaired proxy, authenticated login, or dashboard verification from succeeding, but redirect scheme/forwarded-header handling should be hardened separately.
 
@@ -413,8 +378,9 @@ The following items were not treated as release blockers for this closeout:
 5. Broad API mypy debt remains outside the focused remediation scope.
 6. Repository dependency/security-alert debt should be handled as a dedicated security-maintenance stream rather than silently folded into this closeout.
 7. Slash normalization through the production proxy can emit an HTTP `Location` for an HTTPS upstream request; proxy forwarded-header or redirect-scheme handling should be hardened separately.
+8. A distinct dedicated production frontend/domain has not been established or validated. This is a separate, non-blocking environment/domain qualification; deployed-browser receipt posting, ambiguous-result recovery, idempotent replay, and immutable GRN history are already validated for the frontend build used in the successful isolated release-UAT verification.
 
-Receipt-fixture operational retirement was completed on 2026-09-04, and production frontend/runtime verification was completed on 2026-09-05; neither is an outstanding technical-debt item.
+Production receipt-fixture operational retirement was completed on 2026-09-04, and production quarantine runtime verification was completed on 2026-09-05. The isolated browser-UAT fixture's disposable components were also retired after its browser gate passed. Neither fixture retirement nor browser receipt-posting validation is an outstanding technical-debt item.
 
 PR #39 documentation closeout remains pending review. That review status is separate from the completed production acceptance/quarantine runtime PASS, and no PR #39 review thread is resolved by this report revision.
 
@@ -424,18 +390,20 @@ UAT fixtures must not be destructively deleted merely to remove acceptance evide
 
 The Release 6.0.6 Purchase Receipt fixture has completed supported operational retirement. Its warehouse is closed, item is inactive, and supplier is deactivated without deleting any of them. Its Purchase Receipt records, inventory lots, inventory transactions, PO transitions, and audit events remain immutable acceptance evidence and were not deleted, rewritten, or neutralized by a compensating adjustment. Its synthetic `100 kg` balance remains quarantined in the dedicated `UAT_RECEIPT_WH_A` / `UAT-RECEIPT-FEED` ledger namespace documented in Section 3.
 
-The separate isolated release-UAT browser fixture has also completed controlled retirement of only its disposable operational components. Warehouse `141dee5f-032f-4516-b83e-bb48f6e2fd8f` is closed, inventory item `73476ee4-3d25-4d05-9dcd-41e58596c956` is inactive, and supplier `db2360a1-e44a-469d-bfa4-c70b0cbd3bf2` is deactivated. Its organization remains active, its Purchase Order remains `PARTIALLY_RECEIVED` with `received_quantity = 1.000000`, and receipt `15a240bb-99fb-4c00-9882-590525988178`, GRN `GRN-2026-000001`, inventory lot `78577061-f84e-4240-be5e-eb89069ed507`, inventory transaction `576381ce-0210-4006-a64a-cf7807a3a176`, transition history, and audit evidence remain preserved.
-
 Aquaculture and other Purchase Order fixtures used to establish the acceptance evidence should remain available until the closeout commit/PR is safely merged and the evidence is no longer dependent on live fixture inspection.
+
+The separate isolated Phase 2 browser-UAT fixture has already completed controlled retirement of only its disposable warehouse `R606_BROWSER_WH`, item `R606-BROWSER-FEED`, and supplier `R606-BROWSER-SUPPLIER`. Its organization remains active; its Purchase Order remains `PARTIALLY_RECEIVED`; and its receipt, GRN, lot, transaction, transitions, and audit evidence remain preserved as detailed in Section 3. This completed retirement supersedes any blanket instruction to retain all of that fixture's operational components until report review.
 
 ## 11. Final acceptance statement
 
 **RELEASE 6.0.6 PRODUCTION ACCEPTANCE: PASS**
 
-The current canonical production Git SHA is:
+The accepted production Git SHA is:
 
-`66bac60667df190c4cc2f704ed3d572d8828c90f`
+`48c236ac2e625f0ca18c0e7e7f9940327c2197e4`
 
-Railway production runs that exact SHA with Alembic aligned at `0015_aqua_transfer_integrity`. The canonical production frontend was rebuilt from the same accepted source commit with the corrected Production-only API proxy target. Authenticated production API and browser verification proves the retired fixture remains available administratively and historically while being excluded from operational API and Inventory Dashboard projections. Production acceptance and quarantine runtime verification are therefore complete and PASS. Separately, the deployed frontend build at the same source SHA passed deterministic Purchase Receipt idempotency/recovery validation against isolated release-UAT, including real first commit, ambiguous-result recovery, exact same-request replay, no duplicate inventory effect, GRN/history visibility, and preserved immutable evidence after controlled fixture retirement.
+The initial production acceptance and historical rollback evidence establish that SHA, with Alembic aligned at `0015_aqua_transfer_integrity`. Subsequent production runtime/quarantine verification on PR #41 source SHA `66bac60667df190c4cc2f704ed3d572d8828c90f` proved the retired production receipt fixture remains available administratively and historically while being excluded from operational API and Inventory Dashboard projections; that later runtime-verification SHA does not replace the accepted production SHA.
 
-No additional deployment or migration is required for production acceptance. Documentation/PR #39 closeout remains pending review, independently of the runtime PASS; no review thread has been resolved by this revision. Remaining follow-up is limited to that review and the still-valid technical debt in Section 9.
+The previously outstanding deployed-browser Purchase Receipt idempotency/recovery gate is closed for the frontend build attributed to SHA `66bac60667df190c4cc2f704ed3d572d8828c90f` against isolated Railway release-UAT. The test proved ambiguous-result recovery by exact retry, idempotent replay acknowledgement, no duplicate receipt/lot/transaction state, visible GRN history, and immutable posted-receipt messaging. Controlled retirement then removed only the isolated fixture's disposable operational availability while preserving its immutable evidence chain.
+
+No additional deployment or migration is required for production acceptance. A distinct dedicated production frontend/domain qualification remains a separate non-blocking follow-up and is not implied by the release-UAT browser PASS. Documentation/PR #39 closeout remains pending review, independently of the runtime PASS; no review thread has been resolved by this revision. Remaining follow-up is limited to that review and the still-valid technical debt in Section 9.
