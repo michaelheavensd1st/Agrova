@@ -81,6 +81,8 @@ class AdminUserService:
 
         previous_is_active = target.is_active
         await self.user_repo.set_active(target, is_active=False)
+        if previous_is_active:
+            await self.user_repo.increment_session_version(target)
 
         invalidated_at = datetime.now(UTC)
         recovery_tokens = await self.recovery_repo.list_outstanding_for_user_for_update(target.id)
@@ -147,6 +149,7 @@ class AdminUserService:
                 "Platform administrators cannot revoke all of their own sessions.",
             )
 
+        await self.user_repo.increment_session_version(target)
         refresh_tokens = await self.refresh_repo.list_active_for_user_for_update(target.id)
         revoked_sessions = await self.refresh_repo.revoke_rows(refresh_tokens)
         await self._audit(

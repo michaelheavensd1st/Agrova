@@ -294,6 +294,13 @@ async def get_current_user(
     user = await user_repo.get_by_id(user_id)
     if user is None or not user.is_active or user.deleted_at is not None:
         raise _unauthorized()
+    token_session_version = payload.get("sv", 0)
+    if (
+        type(token_session_version) is not int
+        or token_session_version < 0
+        or token_session_version != user.session_version
+    ):
+        raise _unauthorized()
     user_id_var.set(str(user.id))
     return user
 

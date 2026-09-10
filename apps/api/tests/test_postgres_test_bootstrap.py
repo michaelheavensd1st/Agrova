@@ -107,4 +107,4 @@ def test_repeated_programmatic_upgrade_preserves_host_logging_state(_engine: obj
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
     finally:
         engine.dispose()
-    assert revision == "0015_aqua_transfer_integrity"
+    assert revision == "0016_session_version"

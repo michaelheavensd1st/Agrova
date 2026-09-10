@@ -11,6 +11,8 @@ from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
+from app.core.security import decode_token
 from app.db.session import get_db_session
 from app.deps import get_admin_user_service
 from app.main import app
@@ -70,8 +72,8 @@ async def _audit(action: str, target_id: UUID) -> AuditEvent:
         )
 
 
-async def _seed_credentials(target: User, client: AsyncClient) -> tuple[UUID, UUID]:
-    await login(client, target.email)
+async def _seed_credentials(target: User, client: AsyncClient) -> tuple[UUID, UUID, str, str]:
+    credentials = await login(client, target.email)
     async with _session() as session:
         refresh = (
             (
@@ -92,7 +94,12 @@ async def _seed_credentials(target: User, client: AsyncClient) -> tuple[UUID, UU
         )
         assert issued is not None
         await session.commit()
-        return refresh.id, issued[1].id
+        return (
+            refresh.id,
+            issued[1].id,
+            credentials[get_settings().cookie_access_name],
+            credentials[get_settings().cookie_refresh_name],
+        )
 
 
 async def test_authorization_precedes_target_lookup_and_owner_is_not_admin(
@@ -215,7 +222,7 @@ async def test_disable_is_atomic_idempotent_and_enable_does_not_restore_credenti
     client: AsyncClient,
 ) -> None:
     target = await create_verified_user(f"credentials-{uuid4().hex}@agrovix.dev")
-    refresh_id, recovery_id = await _seed_credentials(target, client)
+    refresh_id, recovery_id, old_access, _ = await _seed_credentials(target, client)
     admin = await _make_admin(client)
 
     response = await client.post(
@@ -266,6 +273,18 @@ async def test_disable_is_atomic_idempotent_and_enable_does_not_restore_credenti
     enable_audit = await _audit("admin.user.enable", target.id)
     assert enable_audit.metadata_json["idempotent"] is True
 
+    assert (
+        await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {old_access}"})
+    ).status_code == 401
+    fresh_login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": target.email, "password": "Sprint0ne!2026"},
+    )
+    assert fresh_login.status_code == 200
+    fresh_access = fresh_login.cookies.get(get_settings().cookie_access_name)
+    assert fresh_access is not None
+    assert decode_token(fresh_access, expected_type="access")["sv"] == 1
+
     async with _session() as session:
         refresh = await session.get(RefreshToken, refresh_id)
         recovery = await session.get(PasswordRecoveryToken, recovery_id)
@@ -277,7 +296,7 @@ async def test_session_revoke_returns_count_audits_and_does_not_touch_recovery(
     client: AsyncClient,
 ) -> None:
     target = await create_verified_user(f"revoke-{uuid4().hex}@agrovix.dev")
-    _, recovery_id = await _seed_credentials(target, client)
+    _, recovery_id, old_access, old_refresh = await _seed_credentials(target, client)
     await login(client, target.email)
     admin = await _make_admin(client)
     response = await client.post(
@@ -299,6 +318,20 @@ async def test_session_revoke_returns_count_audits_and_does_not_touch_recovery(
     audit = await _audit("admin.user.sessions.revoke", target.id)
     assert audit.actor_id == admin.id
     assert audit.metadata_json == {"reason": "Device compromise", "revoked_sessions": 2}
+    assert (
+        await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {old_access}"})
+    ).status_code == 401
+    assert (
+        await client.post("/api/v1/auth/refresh", json={"refresh_token": old_refresh})
+    ).status_code == 401
+    fresh_login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": target.email, "password": "Sprint0ne!2026"},
+    )
+    assert fresh_login.status_code == 200
+    fresh_access = fresh_login.cookies.get(get_settings().cookie_access_name)
+    assert fresh_access is not None
+    assert decode_token(fresh_access, expected_type="access")["sv"] == 1
     async with _session() as session:
         recovery = await session.get(PasswordRecoveryToken, recovery_id)
         assert recovery is not None and recovery.invalidated_at is None
@@ -322,7 +355,7 @@ def _failing_admin_service(
 
 async def test_audit_failure_rolls_back_user_and_credentials(client: AsyncClient) -> None:
     target = await create_verified_user(f"rollback-{uuid4().hex}@agrovix.dev")
-    refresh_id, recovery_id = await _seed_credentials(target, client)
+    refresh_id, recovery_id, _, _ = await _seed_credentials(target, client)
     await _make_admin(client)
     app.dependency_overrides[get_admin_user_service] = _failing_admin_service
     try:
@@ -337,7 +370,7 @@ async def test_audit_failure_rolls_back_user_and_credentials(client: AsyncClient
         user = await session.get(User, target.id)
         refresh = await session.get(RefreshToken, refresh_id)
         recovery = await session.get(PasswordRecoveryToken, recovery_id)
-        assert user is not None and user.is_active
+        assert user is not None and user.is_active and user.session_version == 0
         assert refresh is not None and not refresh.is_revoked
         assert recovery is not None and recovery.invalidated_at is None
         assert (

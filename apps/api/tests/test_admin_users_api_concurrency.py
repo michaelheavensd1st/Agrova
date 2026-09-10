@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select, text
 
 from app.core.rate_limit import InMemoryRateLimiter
-from app.core.security import hash_password, verify_password
+from app.core.security import decode_token, hash_password, verify_password
 from app.db import session as db
 from app.email.log_sender import LogEmailSender
 from app.models.password_recovery import PasswordRecoveryToken
@@ -314,6 +314,32 @@ async def test_revoke_sessions_vs_refresh_proves_both_winner_orders(revoke_first
     async def refresh(session):
         return await _auth(session).refresh(refresh_token=refresh_token)
 
-    _, loser = await _race(revoke, refresh) if revoke_first else await _race(refresh, revoke)
+    winner, loser = await _race(revoke, refresh) if revoke_first else await _race(refresh, revoke)
     assert loser[0] == ("http-401" if revoke_first else "success")
+    assert await _active_refresh_count(target_id) == 0
+    async with db.AsyncSessionLocal() as observer:
+        target = await observer.get(User, target_id)
+        assert target is not None and target.session_version == 1
+    if not revoke_first:
+        assert decode_token(winner.access_token, expected_type="access")["sv"] == 0
+
+
+async def test_concurrent_session_revocations_serialize_generation_increments() -> None:
+    actor_id, target_id, _, _, _, _ = await _seed()
+
+    async def revoke(session):
+        actor = await UserRepository(session).get_by_id(actor_id)
+        assert actor is not None
+        return await _admin(session).revoke_sessions(
+            actor=actor,
+            target_id=target_id,
+            reason="concurrent revoke",
+            request_ctx={},
+        )
+
+    _, loser = await _race(revoke, revoke)
+    assert loser[0] == "success"
+    async with db.AsyncSessionLocal() as observer:
+        target = await observer.get(User, target_id)
+        assert target is not None and target.session_version == 2
     assert await _active_refresh_count(target_id) == 0
