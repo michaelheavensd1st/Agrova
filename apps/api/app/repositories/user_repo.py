@@ -131,6 +131,19 @@ class UserRepository:
         await self.session.flush()
         return user
 
+    async def increment_session_version(self, user: User) -> int:
+        """Invalidate every access token issued for the user's current generation.
+
+        Credential-mutation services acquire the user row lock before calling
+        this method, so concurrent security operations serialize on one
+        authoritative, database-backed generation.
+        """
+        user.session_version += 1
+        self.session.add(user)
+        await self.session.flush()
+        await self.session.refresh(user)
+        return user.session_version
+
     async def set_active(self, user: User, *, is_active: bool) -> User:
         user.is_active = is_active
         self.session.add(user)

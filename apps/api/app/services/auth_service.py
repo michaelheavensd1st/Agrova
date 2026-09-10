@@ -305,7 +305,7 @@ class AuthService:
         access_token, access_exp = create_token(
             subject=user.id,
             token_type="access",
-            extra_claims={"email": user.email},
+            extra_claims={"email": user.email, "sv": user.session_version},
         )
         jti = secrets.token_urlsafe(16)
         refresh_token, refresh_exp = create_token(

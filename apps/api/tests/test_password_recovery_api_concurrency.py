@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select, text
 
 from app.core.rate_limit import InMemoryRateLimiter
-from app.core.security import hash_password, verify_password
+from app.core.security import decode_token, hash_password, verify_password
 from app.db import session as db
 from app.email.log_sender import LogEmailSender
 from app.models.audit import AuditEvent
@@ -299,6 +299,11 @@ async def test_reset_wins_against_refresh_and_login() -> None:
         )
         assert not cleanup_errors, cleanup_errors
 
+    async with db.AsyncSessionLocal() as observer:
+        user = await observer.get(User, user_id)
+        assert user is not None and user.session_version == 1
+    assert decode_token(pair.access_token, expected_type="access")["sv"] == 0
+
 
 @pytest.mark.parametrize("operation_name", ["refresh", "login"])
 async def test_refresh_or_login_winner_is_revoked_by_following_reset(operation_name: str) -> None:
@@ -314,9 +319,13 @@ async def test_refresh_or_login_winner_is_revoked_by_following_reset(operation_n
     task: asyncio.Task | None = None
     try:
         if operation_name == "refresh":
-            await _auth_service(controller).refresh(refresh_token=original_pair.refresh_token)
+            winner_pair = await _auth_service(controller).refresh(
+                refresh_token=original_pair.refresh_token
+            )
         else:
-            await _auth_service(controller).login(email=email, password="Original-Password!2026")
+            _, winner_pair = await _auth_service(controller).login(
+                email=email, password="Original-Password!2026"
+            )
         # Pin the winner transaction at the shared security-root boundary.
         # The auth operation already acquired this lock; the explicit re-read
         # makes the contested state deterministic for PostgreSQL observation.
@@ -349,12 +358,15 @@ async def test_refresh_or_login_winner_is_revoked_by_following_reset(operation_n
         assert not cleanup_errors, cleanup_errors
 
     async with db.AsyncSessionLocal() as observer:
+        user = await observer.get(User, user_id)
         active = await observer.scalar(
             select(func.count())
             .select_from(RefreshToken)
             .where(RefreshToken.user_id == user_id, RefreshToken.is_revoked.is_(False))
         )
+        assert user is not None and user.session_version == 1
         assert active == 0
+    assert decode_token(winner_pair.access_token, expected_type="access")["sv"] == 0
 
 
 async def test_reset_rollback_restores_password_token_sessions_and_audits() -> None:
@@ -385,6 +397,7 @@ async def test_reset_rollback_restores_password_token_sessions_and_audits() -> N
             select(func.count()).select_from(AuditEvent).where(AuditEvent.entity_id == str(user_id))
         )
         assert user is not None and verify_password("Original-Password!2026", user.hashed_password)
+        assert user.session_version == 0
         assert token is not None and token.consumed_at is None
         assert active_refreshes == 1
         assert audit_count == 0

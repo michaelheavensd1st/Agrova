@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from app.api.v1.endpoints import auth as auth_endpoints
 from app.core.config import get_settings
-from app.core.security import hash_password, verify_password
+from app.core.security import decode_token, hash_password, verify_password
 from app.deps import get_email_sender_dep, get_rate_limiter_dep
 from app.email.base import EmailMessage, EmailSender
 from app.main import app
@@ -377,6 +377,9 @@ async def test_reset_changes_password_consumes_token_revokes_sessions_and_audits
         "/api/v1/auth/login", json={"email": user.email, "password": old_password}
     )
     assert login.status_code == 200, login.text
+    access_token = login.cookies.get(get_settings().cookie_access_name)
+    refresh_token = login.cookies.get(get_settings().cookie_refresh_name)
+    assert access_token is not None and refresh_token is not None
     raw_token, token_id = await _issue(user.id)
 
     response = await client.post(
@@ -392,6 +395,19 @@ async def test_reset_changes_password_consumes_token_revokes_sessions_and_audits
     assert any(
         get_settings().cookie_refresh_name in value and "Max-Age=0" in value for value in set_cookie
     )
+    old_access = await client.get(
+        "/api/v1/auth/me", headers={"Authorization": f"Bearer {access_token}"}
+    )
+    assert old_access.status_code == 401
+    old_refresh = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
+    assert old_refresh.status_code == 401
+    new_login = await client.post(
+        "/api/v1/auth/login", json={"email": user.email, "password": new_password}
+    )
+    assert new_login.status_code == 200, new_login.text
+    new_access = new_login.cookies.get(get_settings().cookie_access_name)
+    assert new_access is not None
+    assert decode_token(new_access, expected_type="access")["sv"] == 1
 
     from app.db import session as db
 
@@ -413,9 +429,12 @@ async def test_reset_changes_password_consumes_token_revokes_sessions_and_audits
             .all()
         )
         assert persisted_user is not None
+        assert persisted_user.session_version == 1
         assert verify_password(new_password, persisted_user.hashed_password)
         assert token is not None and token.consumed_at is not None
-        assert refresh_rows and all(row.is_revoked for row in refresh_rows)
+        assert refresh_rows
+        assert sum(not row.is_revoked for row in refresh_rows) == 1
+        assert any(row.is_revoked for row in refresh_rows)
         assert {
             "auth.recovery.complete",
             "auth.password.change",

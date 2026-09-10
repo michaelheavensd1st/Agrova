@@ -226,6 +226,7 @@ class PasswordRecoveryService:
             )
 
         await self.user_repo.set_password_hash(user, hash_password(new_password))
+        await self.user_repo.increment_session_version(user)
         now = datetime.now(UTC)
         await self.token_repo.mark_consumed(token, consumed_at=now)
         outstanding = await self.token_repo.list_outstanding_for_user_for_update(user.id)
