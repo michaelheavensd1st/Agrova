@@ -2,18 +2,18 @@
 
 /**
  * Deliberate operational forms for STOCKING / FEEDING / MORTALITY,
- * plus a controlled catalog-driven form for the remaining Sprint 3
- * event types (SAMPLING / WATER_QUALITY / TRANSFER / HARVEST).
+ * a dedicated identity-safe TRANSFER form, and a controlled catalog-driven
+ * form for the remaining Sprint 3 event types (SAMPLING / WATER_QUALITY / HARVEST).
  *
  * We intentionally do NOT drive stocking / feeding / mortality
  * through a generic JSON-schema form renderer — those are the
  * primary operational workflows and deserve first-class UX.
  */
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { ApiError, apiFetch, apiFetchResult } from '@/lib/api';
 import { parseApiErrors } from '@/lib/api-errors';
-import type { EventCatalogEntry, ProductionEvent } from '@/lib/types';
+import type { EventCatalogEntry, ProductionEvent, ProductionUnit } from '@/lib/types';
 import type {
   DashboardInventoryItem,
   DashboardLot,
@@ -36,6 +36,10 @@ interface CatalogFormProps {
   entry: EventCatalogEntry;
 }
 
+interface TransferFormProps extends CatalogFormProps {
+  sourceUnit: ProductionUnit;
+}
+
 interface CreateResponse {
   event: ProductionEvent;
   replay: boolean;
@@ -48,6 +52,12 @@ interface FeedingFormProps extends Omit<EventFormProps, 'eventType'> {
 
 interface EligibleFeedLot {
   id: string;
+  label: string;
+}
+
+interface EligibleTransferUnit {
+  id: string;
+  unit_id: string;
   label: string;
 }
 
@@ -297,8 +307,12 @@ export function FeedingForm({
       setLotsError(null);
       try {
         const [warehouses, items] = await Promise.all([
-          apiFetch<DashboardWarehouse[]>(`/v1/organizations/${organizationId}/warehouses`),
-          apiFetch<DashboardInventoryItem[]>(`/v1/organizations/${organizationId}/inventory-items`),
+          apiFetch<DashboardWarehouse[]>(
+            `/v1/organizations/${organizationId}/warehouses?operational_only=true`,
+          ),
+          apiFetch<DashboardInventoryItem[]>(
+            `/v1/organizations/${organizationId}/inventory-items?operational_only=true`,
+          ),
         ]);
         const itemById = new Map(
           items
@@ -671,11 +685,12 @@ export function MortalityForm({
 }
 
 /* ================================================================= */
-/* Catalog-driven fallback (SAMPLING / WATER_QUALITY / TRANSFER / HARVEST) */
+/* TRANSFER — deliberate identity-safe operational form              */
 /* ================================================================= */
 
 interface JsonSchema {
   properties?: Record<string, JsonSchema>;
+  $defs?: Record<string, JsonSchema>;
   required?: string[];
   type?: string;
   enum?: string[];
@@ -687,6 +702,369 @@ interface JsonSchema {
   $ref?: string;
   anyOf?: JsonSchema[];
 }
+
+function resolvedSchema(root: JsonSchema, prop: JsonSchema): JsonSchema {
+  let resolved = prop;
+  if (prop.$ref?.startsWith('#/$defs/')) {
+    resolved = root.$defs?.[prop.$ref.slice('#/$defs/'.length)] ?? prop;
+  }
+  const concrete = resolved.anyOf?.find((candidate) => candidate.type !== 'null');
+  return concrete ? { ...resolved, ...concrete } : resolved;
+}
+
+function catalogInitialValue(entry: EventCatalogEntry, key: string, fallback = ''): string {
+  const schema = entry.schema as JsonSchema;
+  const prop = resolvedSchema(schema, schema.properties?.[key] ?? {});
+  const value = prop.default ?? entry.openapi_example?.[key] ?? fallback;
+  return value == null || typeof value === 'object' ? fallback : String(value);
+}
+
+function transferLocalDateTimeValue(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}`;
+}
+
+function safeTransferMessage(message: string): string {
+  return message
+    .replaceAll('source_unit_id', 'Source unit')
+    .replaceAll('destination_unit_id', 'Destination unit')
+    .replaceAll('average_weight', 'Average weight')
+    .replaceAll('weight_unit', 'Weight unit')
+    .replaceAll('transfer_loss', 'Transfer loss')
+    .replaceAll('transferred_at', 'Transferred at')
+    .replace(
+      /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi,
+      'selected unit',
+    );
+}
+
+export function TransferEventForm({
+  batchId,
+  entry,
+  sourceUnit,
+  onCreated,
+  onCancel,
+  onUnauthenticated,
+}: TransferFormProps) {
+  const schema = entry.schema as JsonSchema;
+  const properties = schema.properties ?? {};
+  const onUnauthenticatedRef = useRef(onUnauthenticated);
+  onUnauthenticatedRef.current = onUnauthenticated;
+  const [destinations, setDestinations] = useState<EligibleTransferUnit[]>([]);
+  const [destinationsLoading, setDestinationsLoading] = useState(true);
+  const [destinationsError, setDestinationsError] = useState<string | null>(null);
+  const [destinationId, setDestinationId] = useState('');
+  const [quantity, setQuantity] = useState(() => catalogInitialValue(entry, 'quantity'));
+  const [averageWeight, setAverageWeight] = useState(() =>
+    catalogInitialValue(entry, 'average_weight'),
+  );
+  const [weightUnit, setWeightUnit] = useState(() =>
+    catalogInitialValue(entry, 'weight_unit', 'g'),
+  );
+  const [transferLoss, setTransferLoss] = useState(() =>
+    catalogInitialValue(entry, 'transfer_loss', '0'),
+  );
+  const [transferredAt, setTransferredAt] = useState(() => transferLocalDateTimeValue(new Date()));
+  const [notes, setNotes] = useState(() => catalogInitialValue(entry, 'notes'));
+  const submittingRef = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadDestinations() {
+      setDestinationsLoading(true);
+      setDestinationsError(null);
+      setDestinations([]);
+      setDestinationId('');
+      try {
+        const options = await apiFetch<EligibleTransferUnit[]>(
+          `/v1/batches/${batchId}/transfer-destinations`,
+        );
+        if (!cancelled) setDestinations(options);
+      } catch (loadError) {
+        if (!cancelled) {
+          if (loadError instanceof ApiError && loadError.status === 401) {
+            onUnauthenticatedRef.current?.();
+          }
+          if (loadError instanceof ApiError && loadError.status === 403) {
+            setDestinationsError('You do not have permission to record transfers.');
+          } else {
+            const parsed = parseApiErrors(loadError);
+            setDestinationsError(
+              safeTransferMessage(
+                parsed.generalErrors[0] ?? 'Eligible destination units could not be loaded.',
+              ),
+            );
+          }
+          setDestinations([]);
+        }
+      } finally {
+        if (!cancelled) setDestinationsLoading(false);
+      }
+    }
+    void loadDestinations();
+    return () => {
+      cancelled = true;
+    };
+  }, [batchId]);
+
+  function descriptionFor(key: string): string | undefined {
+    return resolvedSchema(schema, properties[key] ?? {}).description;
+  }
+
+  function fieldError(key: string) {
+    const message = fieldErrors[key];
+    if (!message) return null;
+    return (
+      <span
+        id={`transfer-${key}-error`}
+        role="alert"
+        className="mt-1 block text-xs text-destructive"
+      >
+        {message}
+      </span>
+    );
+  }
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (submittingRef.current) return;
+    const selectedDestination = destinations.find((unit) => unit.id === destinationId);
+    if (!selectedDestination) {
+      setFieldErrors({ destination_batch_id: 'Select an eligible destination batch.' });
+      return;
+    }
+    submittingRef.current = true;
+    setBusy(true);
+    setError(null);
+    setFieldErrors({});
+    try {
+      const data: Record<string, unknown> = {
+        source_unit_id: sourceUnit.id,
+        destination_unit_id: selectedDestination.unit_id,
+        destination_batch_id: selectedDestination.id,
+        quantity: Number(quantity),
+        weight_unit: weightUnit,
+        transfer_loss: Number(transferLoss),
+        transferred_at: new Date(transferredAt).toISOString(),
+      };
+      if (averageWeight !== '') data.average_weight = Number(averageWeight);
+      if (notes.trim()) data.notes = notes.trim();
+      const { event } = await postEvent(
+        batchId,
+        { event_type: entry.code, data },
+        `transfer-${batchId}-${Date.now()}-${crypto.randomUUID()}`,
+      );
+      onCreated(event);
+    } catch (submitError) {
+      if (submitError instanceof ApiError && submitError.status === 401) onUnauthenticated?.();
+      const parsed = parseApiErrors(submitError, new Set(Object.keys(properties)));
+      setFieldErrors(
+        Object.fromEntries(
+          Object.entries(parsed.fieldErrors).map(([key, message]) => [
+            key,
+            safeTransferMessage(message),
+          ]),
+        ),
+      );
+      setError(parsed.generalErrors[0] ? safeTransferMessage(parsed.generalErrors[0]) : null);
+    } finally {
+      submittingRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  const sourceLabel = sourceUnit.name
+    ? `${sourceUnit.code} — ${sourceUnit.name}`
+    : sourceUnit.code || 'Current production unit';
+  const weightUnits = resolvedSchema(schema, properties.weight_unit ?? {}).enum ?? ['g', 'kg'];
+  const destinationUnavailable =
+    destinationsLoading || Boolean(destinationsError) || destinations.length === 0;
+
+  return (
+    <form onSubmit={submit} className="space-y-3" data-testid="transfer-form">
+      <h3 className="font-display text-lg">Record {entry.display_name}</h3>
+      <div className="text-sm">
+        <span className="block">Source unit</span>
+        <p
+          className="mt-1 rounded-md border border-border bg-secondary px-3 py-2"
+          data-testid="transfer-source-unit"
+        >
+          {sourceLabel}
+        </p>
+        {fieldError('source_unit_id')}
+      </div>
+
+      <label className="block text-sm">
+        Destination batch <span className="text-destructive">*</span>
+        <select
+          data-testid="transfer-destination-unit"
+          className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+          value={destinationId}
+          onChange={(e) => {
+            setDestinationId(e.target.value);
+            setFieldErrors((prev) => ({ ...prev, destination_batch_id: '' }));
+          }}
+          disabled={destinationUnavailable || busy}
+          required
+          aria-invalid={Boolean(fieldErrors.destination_batch_id)}
+          aria-describedby={
+            fieldErrors.destination_batch_id ? 'transfer-destination_batch_id-error' : undefined
+          }
+        >
+          <option value="">Select an eligible destination batch…</option>
+          {destinations.map((unit) => (
+            <option key={unit.id} value={unit.id}>
+              {unit.label}
+            </option>
+          ))}
+        </select>
+        {fieldError('destination_batch_id')}
+      </label>
+      {destinationsLoading && (
+        <p className="text-xs text-muted-foreground" data-testid="transfer-destinations-loading">
+          Loading eligible destination batches…
+        </p>
+      )}
+      {!destinationsLoading && !destinationsError && destinations.length === 0 && (
+        <p
+          className="rounded-md bg-secondary px-3 py-2 text-xs text-muted-foreground"
+          data-testid="transfer-destinations-empty"
+        >
+          No eligible destination batches are available in this farm.
+        </p>
+      )}
+      {destinationsError && (
+        <p className="text-xs text-destructive" data-testid="transfer-destinations-error">
+          Destination batches could not be loaded: {destinationsError}
+        </p>
+      )}
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block text-sm">
+          Quantity (individuals) <span className="text-destructive">*</span>
+          <input
+            data-testid="transfer-quantity"
+            type="number"
+            min={resolvedSchema(schema, properties.quantity ?? {}).minimum ?? 1}
+            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+            required
+          />
+          {fieldError('quantity')}
+          {descriptionFor('quantity') && (
+            <span className="mt-0.5 block text-xs text-muted-foreground">
+              {descriptionFor('quantity')}
+            </span>
+          )}
+        </label>
+        <label className="block text-sm">
+          Average weight
+          <input
+            data-testid="transfer-average-weight"
+            type="number"
+            min={resolvedSchema(schema, properties.average_weight ?? {}).minimum ?? 0}
+            step="0.001"
+            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+            value={averageWeight}
+            onChange={(e) => setAverageWeight(e.target.value)}
+          />
+          {fieldError('average_weight')}
+        </label>
+        <label className="block text-sm">
+          Weight unit
+          <select
+            data-testid="transfer-weight-unit"
+            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+            value={weightUnit}
+            onChange={(e) => setWeightUnit(e.target.value)}
+          >
+            {weightUnits.map((unit) => (
+              <option key={unit} value={unit}>
+                {unit}
+              </option>
+            ))}
+          </select>
+          {fieldError('weight_unit')}
+        </label>
+        <label className="block text-sm">
+          Transfer loss
+          <input
+            data-testid="transfer-loss"
+            type="number"
+            min={resolvedSchema(schema, properties.transfer_loss ?? {}).minimum ?? 0}
+            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+            value={transferLoss}
+            onChange={(e) => setTransferLoss(e.target.value)}
+          />
+          {fieldError('transfer_loss')}
+          {descriptionFor('transfer_loss') && (
+            <span className="mt-0.5 block text-xs text-muted-foreground">
+              {descriptionFor('transfer_loss')}
+            </span>
+          )}
+        </label>
+      </div>
+      <label className="block text-sm">
+        Transferred at <span className="text-destructive">*</span>
+        <input
+          data-testid="transfer-transferred-at"
+          type="datetime-local"
+          className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+          value={transferredAt}
+          onChange={(e) => setTransferredAt(e.target.value)}
+          required
+        />
+        {fieldError('transferred_at')}
+      </label>
+      <label className="block text-sm">
+        Notes
+        <textarea
+          data-testid="transfer-notes"
+          rows={2}
+          className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+        />
+        {fieldError('notes')}
+      </label>
+      {error && (
+        <p
+          className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          data-testid="transfer-error"
+        >
+          {error}
+        </p>
+      )}
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-secondary"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={busy || destinationUnavailable || !destinationId}
+          data-testid="transfer-submit"
+          className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-60"
+        >
+          {busy ? 'Saving…' : 'Record transfer'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/* ================================================================= */
+/* Catalog-driven fallback (SAMPLING / WATER_QUALITY / HARVEST)      */
+/* ================================================================= */
 
 function inputTypeFor(prop: JsonSchema): 'text' | 'number' | 'datetime-local' | 'checkbox' {
   if (prop.type === 'number' || prop.type === 'integer') return 'number';

@@ -45,6 +45,7 @@ class BatchProjections:
     cumulative_mortality: int
     cumulative_harvest: int
     cumulative_transfer_out: int
+    cumulative_transfer_in: int
     estimated_remaining_population: int
     latest_average_weight: float | None
     weight_unit: str | None
@@ -63,6 +64,7 @@ class BatchProjections:
             "cumulative_mortality": self.cumulative_mortality,
             "cumulative_harvest": self.cumulative_harvest,
             "cumulative_transfer_out": self.cumulative_transfer_out,
+            "cumulative_transfer_in": self.cumulative_transfer_in,
             "estimated_remaining_population": self.estimated_remaining_population,
             "latest_average_weight": self.latest_average_weight,
             "weight_unit": self.weight_unit,
@@ -106,8 +108,9 @@ def compute_batch_projections(
 ) -> BatchProjections:
     """Compute derived projections for a batch from its event stream.
 
-    ``events`` MUST be ordered ascending by (performed_at, id) — the
-    natural insert order — so "latest" resolves correctly.
+    ``events`` MUST be ordered by ``(performed_at, created_at, id)``.
+    ``created_at`` is immutable insertion chronology for equal performed
+    times; ``id`` is only a deterministic final tie-breaker.
     """
     now = now or datetime.now(UTC)
 
@@ -115,6 +118,8 @@ def compute_batch_projections(
     cumulative_mortality = 0
     cumulative_harvest = 0
     cumulative_transfer_out = 0
+    cumulative_transfer_in = 0
+    remaining = 0
     total_feed_kg = 0.0
     latest_average_weight: float | None = None
     latest_weight_unit: str | None = None
@@ -128,7 +133,9 @@ def compute_batch_projections(
         data = evt.data or {}
         code = evt.event_type
         if code == "STOCKING":
-            initial_stocked += int(data.get("quantity", 0))
+            stocked_quantity = int(data.get("quantity", 0))
+            initial_stocked += stocked_quantity
+            remaining += stocked_quantity
             if stocking_seen_at is None:
                 stocking_seen_at = evt.performed_at
             # Cache first-stocking weight for later fallback
@@ -143,12 +150,28 @@ def compute_batch_projections(
                 latest_average_weight = float(data.get("average_weight", 0) or 0)
                 latest_weight_unit = data.get("weight_unit") or "g"
         elif code == "MORTALITY":
-            cumulative_mortality += int(data.get("count", 0) or 0)
+            count = int(data.get("count", 0) or 0)
+            cumulative_mortality += count
+            remaining -= count
         elif code == "TRANSFER":
-            cumulative_transfer_out += int(data.get("quantity", 0) or 0)
-            cumulative_mortality += int(data.get("transfer_loss", 0) or 0)
+            quantity = int(data.get("quantity", 0) or 0)
+            raw_role = getattr(evt, "transfer_role", None)
+            role = getattr(raw_role, "value", raw_role)
+            if role == "in":
+                cumulative_transfer_in += quantity
+                remaining += quantity
+                if data.get("average_weight") is not None:
+                    latest_average_weight = float(data["average_weight"])
+                    latest_weight_unit = data.get("weight_unit") or "g"
+            else:  # Legacy source-only TRANSFER rows remain OUT-compatible.
+                loss = int(data.get("transfer_loss", 0) or 0)
+                cumulative_transfer_out += quantity
+                cumulative_mortality += loss
+                remaining -= quantity + loss
         elif code == "HARVEST":
-            cumulative_harvest += int(data.get("quantity", 0) or 0)
+            quantity = int(data.get("quantity", 0) or 0)
+            cumulative_harvest += quantity
+            remaining -= quantity
         elif code == "FEEDING":
             qty = float(data.get("quantity", 0) or 0)
             unit = data.get("unit") or "kg"
@@ -160,6 +183,7 @@ def compute_batch_projections(
                 latest_weight_unit = data.get("weight_unit") or latest_weight_unit or "g"
             if data.get("estimated_population") is not None:
                 latest_sampling_estimated_pop = int(data["estimated_population"])
+                remaining = latest_sampling_estimated_pop
             latest_sampling_at = _to_aware(evt.performed_at)
         elif code == "WATER_QUALITY":
             latest_water_quality = {
@@ -175,13 +199,7 @@ def compute_batch_projections(
 
     # Estimated remaining population: authoritative sampling wins;
     # otherwise fall back to the mass-balance formula.
-    if latest_sampling_estimated_pop is not None:
-        remaining = max(latest_sampling_estimated_pop, 0)
-    else:
-        remaining = max(
-            initial_stocked - cumulative_mortality - cumulative_transfer_out - cumulative_harvest,
-            0,
-        )
+    remaining = max(remaining, 0)
 
     biomass_kg: float | None
     if latest_average_weight is not None and latest_weight_unit is not None:
@@ -189,7 +207,10 @@ def compute_batch_projections(
     else:
         biomass_kg = None
 
-    survival = max(0.0, min(1.0, remaining / initial_stocked)) if initial_stocked > 0 else None
+    population_introduced = initial_stocked + cumulative_transfer_in
+    survival = (
+        max(0.0, min(1.0, remaining / population_introduced)) if population_introduced > 0 else None
+    )
 
     # Batch age: prefer stocked_at → then first STOCKING event →
     # then planned_at (in that order). Normalise everything to
@@ -205,6 +226,7 @@ def compute_batch_projections(
         cumulative_mortality=cumulative_mortality,
         cumulative_harvest=cumulative_harvest,
         cumulative_transfer_out=cumulative_transfer_out,
+        cumulative_transfer_in=cumulative_transfer_in,
         estimated_remaining_population=remaining,
         latest_average_weight=latest_average_weight,
         weight_unit=latest_weight_unit,

@@ -5,6 +5,13 @@ export interface PermissionContext {
   farmId?: UUID;
 }
 
+export function hasPlatformPermission(user: CurrentUser | null, permission: string): boolean {
+  if (!user) return false;
+  return (
+    user.is_superuser || user.permissions.includes('*') || user.permissions.includes(permission)
+  );
+}
+
 export function hasScopedPermission(
   user: CurrentUser | null,
   permission: string,

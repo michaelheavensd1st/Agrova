@@ -14,7 +14,7 @@ import logging
 import sys
 import time
 import uuid
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TextIO
 
 from app.core.config import get_settings
 
@@ -93,16 +93,24 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str, separators=(",", ":"))
 
 
+class AgrovixLogHandler(logging.StreamHandler[TextIO]):
+    """Application-owned handler, distinct from handlers installed by the host."""
+
+
 def configure_logging() -> None:
     """Install the JSON handler on the root logger (idempotent)."""
     settings = get_settings()
     level = logging.DEBUG if settings.api_debug else logging.INFO
 
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(JsonFormatter())
-
     root = logging.getLogger()
-    root.handlers = [handler]
+    handler = next(
+        (item for item in root.handlers if isinstance(item, AgrovixLogHandler)),
+        None,
+    )
+    if handler is None:
+        handler = AgrovixLogHandler(sys.stdout)
+        root.addHandler(handler)
+    handler.setFormatter(JsonFormatter())
     root.setLevel(level)
 
     # Tame noisy libraries.

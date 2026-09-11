@@ -90,6 +90,22 @@ export default function OrganizationDetail() {
       </section>
 
       <section className="mt-10">
+        <h2 className="text-lg font-semibold">Operations</h2>
+        <div className="mt-4">
+          <Link
+            href={`/purchase-orders?organization_id=${encodeURIComponent(orgId)}`}
+            data-testid="organization-purchase-orders-link"
+            className="block rounded-2xl border border-border bg-card/60 p-4 transition hover:border-primary/40 hover:shadow-sm"
+          >
+            <p className="text-sm font-medium">Purchase Orders</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Create, review, approve, and receive organization purchase orders.
+            </p>
+          </Link>
+        </div>
+      </section>
+
+      <section className="mt-10">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Team</h2>
           <Link

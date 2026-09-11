@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const configPath = require.resolve('../next.config.js');
+const turboConfig = require('../../../turbo.json');
 
 async function withProxyTarget(target, assertion) {
   const originalTarget = process.env.API_PROXY_TARGET;
@@ -20,6 +21,10 @@ async function withProxyTarget(target, assertion) {
 }
 
 describe('Next.js API proxy configuration', () => {
+  it('makes the server-side proxy target available to the web build', () => {
+    expect(turboConfig.tasks.build.env).toContain('API_PROXY_TARGET');
+  });
+
   it('rewrites the same-origin API path to the host-development API by default', async () => {
     await withProxyTarget(undefined, async (loadConfig) => {
       const config = loadConfig();

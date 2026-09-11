@@ -247,7 +247,11 @@ describe('PurchaseOrderDetailPage', () => {
     render(<PurchaseOrderDetailPage />);
     expect(await screen.findByTestId('po-detail')).toBeInTheDocument();
     expect(screen.getByTestId('po-transitions-loading')).toBeInTheDocument();
-    await act(() => historyRequest.reject(new Error('history unavailable')));
+    const observedRejection = historyRequest.promise.catch(() => undefined);
+    await act(async () => {
+      historyRequest.reject(new Error('history unavailable'));
+      await observedRejection;
+    });
     expect(await screen.findByTestId('po-transitions-error')).toBeInTheDocument();
     expect(screen.getByTestId('po-detail')).toBeInTheDocument();
   });
@@ -680,6 +684,13 @@ describe('PurchaseOrderDetailPage', () => {
       await waitFor(() =>
         expect([transitionLoads, receiptLoads, warehouseLoads]).toEqual([2, 2, 2]),
       );
+
+      const requestedPaths = mockedApiFetch.mock.calls.map(([path]) => path);
+      expect(
+        requestedPaths.filter((path) => path === '/v1/purchase-orders/po-1/receipt-warehouses'),
+      ).toHaveLength(2);
+      expect(requestedPaths).not.toContain('/v1/purchase-orders/org-1/receipt-warehouses');
+
       await waitFor(() => expect(screen.getByTestId('receive-po-action')).toHaveFocus());
     },
   );

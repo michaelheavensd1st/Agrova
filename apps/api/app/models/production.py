@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -78,6 +79,11 @@ class ProductionUnitStatus(enum.StrEnum):
     ACTIVE = "active"
     MAINTENANCE = "maintenance"
     CLOSED = "closed"
+
+
+class ProductionTransferRole(enum.StrEnum):
+    OUT = "out"
+    IN = "in"
 
 
 class ProductionBatchState(enum.StrEnum):
@@ -328,6 +334,51 @@ class ProductionBatchTransition(Base, UUIDPrimaryKeyMixin):
 
 
 # --------------------------------------------------------------------- #
+# ProductionTransfer — durable identity for one atomic biological movement
+# --------------------------------------------------------------------- #
+class ProductionTransfer(Base, UUIDPrimaryKeyMixin):
+    __tablename__ = "production_transfers"
+    __table_args__ = (
+        CheckConstraint(
+            "source_batch_id <> destination_batch_id", name="ck_prod_transfer_batches_distinct"
+        ),
+        CheckConstraint(
+            "source_unit_id <> destination_unit_id", name="ck_prod_transfer_units_distinct"
+        ),
+        CheckConstraint("quantity > 0", name="ck_prod_transfer_quantity_positive"),
+        CheckConstraint("transfer_loss >= 0", name="ck_prod_transfer_loss_nonnegative"),
+        Index(
+            "uq_production_transfer_source_idempotency",
+            "source_batch_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+            sqlite_where=text("idempotency_key IS NOT NULL"),
+        ),
+    )
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    farm_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_batch_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("production_batches.id"), nullable=False
+    )
+    destination_batch_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("production_batches.id"), nullable=False
+    )
+    source_unit_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("production_units.id"), nullable=False
+    )
+    destination_unit_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("production_units.id"), nullable=False
+    )
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    transfer_loss: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    payload_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+# --------------------------------------------------------------------- #
 # ProductionEvent — the append-only operational event log
 # --------------------------------------------------------------------- #
 class ProductionEvent(Base, UUIDPrimaryKeyMixin):
@@ -348,6 +399,14 @@ class ProductionEvent(Base, UUIDPrimaryKeyMixin):
         Index("ix_events_type_performed", "event_type", "performed_at"),
         Index("ix_events_org_performed", "organization_id", "performed_at"),
         Index("ix_events_farm_performed", "farm_id", "performed_at"),
+        Index(
+            "uq_production_event_transfer_role",
+            "transfer_id",
+            "transfer_role",
+            unique=True,
+            postgresql_where=text("transfer_id IS NOT NULL"),
+            sqlite_where=text("transfer_id IS NOT NULL"),
+        ),
         # Idempotency (Codex Review Gate 01, finding CRG01-2):
         # ``(batch_id, idempotency_key)`` must be unique when the key is
         # supplied by the client. The partial unique index guarantees at
@@ -394,6 +453,18 @@ class ProductionEvent(Base, UUIDPrimaryKeyMixin):
     )
     event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     event_type_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    transfer_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("production_transfers.id"), nullable=True, index=True
+    )
+    transfer_role: Mapped[ProductionTransferRole | None] = mapped_column(
+        SQLEnum(
+            ProductionTransferRole,
+            name="production_transfer_role",
+            create_type=False,
+            values_callable=lambda enum: [m.value for m in enum],
+        ),
+        nullable=True,
+    )
     performed_by_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
@@ -410,7 +481,7 @@ class ProductionEvent(Base, UUIDPrimaryKeyMixin):
     # ``(batch_id, idempotency_key)`` is unique (partial index above).
     # ``payload_hash`` is a stable SHA-256 hex of the validated data
     # + event_type so that replaying the SAME key with a DIFFERENT
-    # payload can be rejected as a conflict rather than silently
+    # semantic request can be rejected as a conflict rather than silently
     # accepted.
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     payload_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)

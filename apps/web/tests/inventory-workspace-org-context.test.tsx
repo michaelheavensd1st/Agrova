@@ -144,11 +144,13 @@ describe('/inventory workspace — organization context retention (sync)', () =>
     // Basic wiring: A and B both resolve immediately.
     mockedApiFetch.mockImplementation((path: string) => {
       if (path === '/v1/organizations') return Promise.resolve([ORG_A, ORG_B]);
-      if (path === `/v1/organizations/${ORG_A.id}/warehouses`) return Promise.resolve([WH_A]);
-      if (path === `/v1/organizations/${ORG_B.id}/warehouses`) return Promise.resolve([WH_B]);
-      if (path === `/v1/organizations/${ORG_A.id}/inventory-items`)
+      if (path.startsWith(`/v1/organizations/${ORG_A.id}/warehouses`))
+        return Promise.resolve([WH_A]);
+      if (path.startsWith(`/v1/organizations/${ORG_B.id}/warehouses`))
+        return Promise.resolve([WH_B]);
+      if (path.startsWith(`/v1/organizations/${ORG_A.id}/inventory-items`))
         return Promise.resolve([ITEM_A]);
-      if (path === `/v1/organizations/${ORG_B.id}/inventory-items`)
+      if (path.startsWith(`/v1/organizations/${ORG_B.id}/inventory-items`))
         return Promise.resolve([ITEM_B]);
       if (/^\/v1\/warehouses\/[^/]+\/lots$/.test(path)) return Promise.resolve([]);
       if (/^\/v1\/warehouses\/[^/]+\/storage-locations$/.test(path)) return Promise.resolve([]);
@@ -225,10 +227,11 @@ describe('/inventory workspace — async organization-race protection', () => {
 
     mockedApiFetch.mockImplementation((path: string) => {
       if (path === '/v1/organizations') return Promise.resolve([ORG_A, ORG_B]);
-      if (path === `/v1/organizations/${ORG_A.id}/warehouses`) return dAWh.promise;
-      if (path === `/v1/organizations/${ORG_A.id}/inventory-items`) return dAItems.promise;
-      if (path === `/v1/organizations/${ORG_B.id}/warehouses`) return Promise.resolve([WH_B]);
-      if (path === `/v1/organizations/${ORG_B.id}/inventory-items`)
+      if (path.startsWith(`/v1/organizations/${ORG_A.id}/warehouses`)) return dAWh.promise;
+      if (path.startsWith(`/v1/organizations/${ORG_A.id}/inventory-items`)) return dAItems.promise;
+      if (path.startsWith(`/v1/organizations/${ORG_B.id}/warehouses`))
+        return Promise.resolve([WH_B]);
+      if (path.startsWith(`/v1/organizations/${ORG_B.id}/inventory-items`))
         return Promise.resolve([ITEM_B]);
       if (/^\/v1\/warehouses\/[^/]+\/lots$/.test(path)) return Promise.resolve([]);
       if (/^\/v1\/warehouses\/[^/]+\/storage-locations$/.test(path)) return Promise.resolve([]);
@@ -278,11 +281,13 @@ describe('/inventory workspace — async organization-race protection', () => {
 
     mockedApiFetch.mockImplementation((path: string) => {
       if (path === '/v1/organizations') return Promise.resolve([ORG_A, ORG_B]);
-      if (path === `/v1/organizations/${ORG_A.id}/warehouses`) return Promise.resolve([WH_A]);
-      if (path === `/v1/organizations/${ORG_A.id}/inventory-items`)
+      if (path.startsWith(`/v1/organizations/${ORG_A.id}/warehouses`))
+        return Promise.resolve([WH_A]);
+      if (path.startsWith(`/v1/organizations/${ORG_A.id}/inventory-items`))
         return Promise.resolve([ITEM_A]);
-      if (path === `/v1/organizations/${ORG_B.id}/warehouses`) return Promise.resolve([WH_B]);
-      if (path === `/v1/organizations/${ORG_B.id}/inventory-items`)
+      if (path.startsWith(`/v1/organizations/${ORG_B.id}/warehouses`))
+        return Promise.resolve([WH_B]);
+      if (path.startsWith(`/v1/organizations/${ORG_B.id}/inventory-items`))
         return Promise.resolve([ITEM_B]);
       if (path === `/v1/warehouses/${WH_A.id}/lots`) return dALots.promise;
       if (path === `/v1/warehouses/${WH_B.id}/lots`) return Promise.resolve([LOT_B]);
@@ -326,11 +331,13 @@ describe('/inventory workspace — async organization-race protection', () => {
 
     mockedApiFetch.mockImplementation((path: string) => {
       if (path === '/v1/organizations') return Promise.resolve([ORG_A, ORG_B]);
-      if (path === `/v1/organizations/${ORG_A.id}/warehouses`) return Promise.resolve([WH_A]);
-      if (path === `/v1/organizations/${ORG_A.id}/inventory-items`)
+      if (path.startsWith(`/v1/organizations/${ORG_A.id}/warehouses`))
+        return Promise.resolve([WH_A]);
+      if (path.startsWith(`/v1/organizations/${ORG_A.id}/inventory-items`))
         return Promise.resolve([ITEM_A]);
-      if (path === `/v1/organizations/${ORG_B.id}/warehouses`) return Promise.resolve([WH_B]);
-      if (path === `/v1/organizations/${ORG_B.id}/inventory-items`)
+      if (path.startsWith(`/v1/organizations/${ORG_B.id}/warehouses`))
+        return Promise.resolve([WH_B]);
+      if (path.startsWith(`/v1/organizations/${ORG_B.id}/inventory-items`))
         return Promise.resolve([ITEM_B]);
       if (path === `/v1/warehouses/${WH_A.id}/lots`) return Promise.resolve([LOT_A]);
       if (path === `/v1/warehouses/${WH_B.id}/lots`) return Promise.resolve([LOT_B]);
@@ -409,10 +416,11 @@ describe('/inventory workspace — async organization-race protection', () => {
 
     mockedApiFetch.mockImplementation((path: string) => {
       if (path === '/v1/organizations') return Promise.resolve([ORG_A, ORG_B]);
-      if (path === `/v1/organizations/${ORG_A.id}/warehouses`) return dAWh.promise;
-      if (path === `/v1/organizations/${ORG_A.id}/inventory-items`) return dAItems.promise;
-      if (path === `/v1/organizations/${ORG_B.id}/warehouses`) return Promise.resolve([WH_B]);
-      if (path === `/v1/organizations/${ORG_B.id}/inventory-items`)
+      if (path.startsWith(`/v1/organizations/${ORG_A.id}/warehouses`)) return dAWh.promise;
+      if (path.startsWith(`/v1/organizations/${ORG_A.id}/inventory-items`)) return dAItems.promise;
+      if (path.startsWith(`/v1/organizations/${ORG_B.id}/warehouses`))
+        return Promise.resolve([WH_B]);
+      if (path.startsWith(`/v1/organizations/${ORG_B.id}/inventory-items`))
         return Promise.resolve([ITEM_B]);
       if (/^\/v1\/warehouses\/[^/]+\/lots$/.test(path)) return Promise.resolve([]);
       if (/^\/v1\/warehouses\/[^/]+\/storage-locations$/.test(path)) return Promise.resolve([]);

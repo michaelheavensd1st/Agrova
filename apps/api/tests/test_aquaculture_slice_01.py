@@ -342,7 +342,7 @@ async def test_transfer_source_must_match_batch_unit(client: AsyncClient) -> Non
         json={"event_type": "TRANSFER", "data": body},
     )
     assert r.status_code == 409, r.text
-    assert r.json()["detail"]["code"] == "transfer_source_mismatch"
+    assert r.json()["detail"]["code"] == "transfer_source_changed"
 
 
 async def test_transfer_destination_not_found(client: AsyncClient) -> None:
@@ -356,8 +356,8 @@ async def test_transfer_destination_not_found(client: AsyncClient) -> None:
         f"/api/v1/batches/{batch_id}/events",
         json={"event_type": "TRANSFER", "data": body},
     )
-    assert r.status_code == 404, r.text
-    assert r.json()["detail"]["code"] == "transfer_destination_not_found"
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["code"] == "transfer_destination_ineligible"
 
 
 async def test_transfer_cross_farm_is_blocked(client: AsyncClient) -> None:
@@ -388,8 +388,8 @@ async def test_transfer_cross_farm_is_blocked(client: AsyncClient) -> None:
         f"/api/v1/batches/{batch_id}/events",
         json={"event_type": "TRANSFER", "data": body},
     )
-    assert r.status_code == 409, r.text
-    assert r.json()["detail"]["code"] == "transfer_cross_farm_blocked"
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["code"] == "transfer_destination_ineligible"
 
     # Ensure no event slipped in (atomicity + rejection).
     r = await client.get(f"/api/v1/batches/{batch_id}/events", params={"event_type": "TRANSFER"})

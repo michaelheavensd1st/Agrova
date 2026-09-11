@@ -67,11 +67,17 @@ class Settings(BaseSettings):
     # --- Email (development sender by default) ---
     email_from_address: str = Field(default="no-reply@agrovix.dev")
     email_from_name: str = Field(default="Agrovix AgOS")
-    email_provider: str = Field(default="log")  # 'log' | 'resend' | 'sendgrid'
+    email_provider: str = Field(default="log")  # 'log' | 'resend'
     resend_api_key: str | None = Field(default=None)
     web_app_url: str = Field(default="http://localhost:3000")
     verification_token_expire_hours: int = Field(default=24)
     invitation_token_expire_days: int = Field(default=14)
+    password_recovery_token_expire_minutes: int = Field(default=60, ge=15, le=120)
+
+    # --- Rate limiting: password recovery ---
+    password_recovery_request_max_per_email_hour: int = Field(default=3, ge=1)
+    password_recovery_request_max_per_ip_hour: int = Field(default=10, ge=1)
+    password_recovery_request_window_seconds: int = Field(default=3600, ge=1)
 
     # --- Auth policy ---
     allow_unverified_login: bool = Field(default=False)  # dev override

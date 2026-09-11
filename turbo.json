@@ -9,6 +9,7 @@
     },
     "build": {
       "dependsOn": ["^build"],
+      "env": ["API_PROXY_TARGET"],
       "outputs": [".next/**", "!.next/cache/**", "dist/**", "build/**"]
     },
     "lint": {

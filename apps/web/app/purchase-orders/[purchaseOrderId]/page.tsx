@@ -386,7 +386,7 @@ export default function PurchaseOrderDetailPage() {
     const controller = new AbortController();
     const capturedId = purchaseOrder.id;
     setWarehouseLabels(new Map());
-    void listReceiptWarehouses(purchaseOrder.organization_id, controller.signal)
+    void listReceiptWarehouses(purchaseOrder.id, controller.signal)
       .then((warehouses) => {
         if (
           generation !== receiptOptionsGenerationRef.current ||

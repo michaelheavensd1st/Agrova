@@ -27,6 +27,7 @@ import {
   FeedingForm,
   MortalityForm,
   StockingForm,
+  TransferEventForm,
   useEventCatalog,
 } from '@/components/event-forms';
 
@@ -65,7 +66,9 @@ function payloadSummary(evt: ProductionEvent): string {
       return parts.join(' · ') || 'water quality';
     }
     case 'TRANSFER':
-      return `→ ${String(d.destination_unit_id ?? '').slice(0, 8)} · ${d.quantity} ind.`;
+      return evt.transfer_role === 'in'
+        ? `← ${d.quantity} ind. received`
+        : `→ ${d.quantity} ind. sent`;
     case 'HARVEST':
       return `${fmtNumber(Number(d.quantity))} ind · ${d.total_weight}${d.weight_unit ?? 'kg'}${d.is_final ? ' · FINAL' : ''}`;
     default:
@@ -326,7 +329,17 @@ export default function BatchDetailPage() {
                 onUnauthenticated={() => router.push('/login')}
               />
             )}
-            {picker.kind === 'catalog' && (
+            {picker.kind === 'catalog' && picker.entry.code === 'TRANSFER' && unit && farm && (
+              <TransferEventForm
+                batchId={batchId}
+                entry={picker.entry}
+                sourceUnit={unit}
+                onCreated={onEventCreated}
+                onCancel={() => setPicker({ kind: 'idle' })}
+                onUnauthenticated={() => router.push('/login')}
+              />
+            )}
+            {picker.kind === 'catalog' && picker.entry.code !== 'TRANSFER' && (
               <CatalogEventForm
                 batchId={batchId}
                 entry={picker.entry}

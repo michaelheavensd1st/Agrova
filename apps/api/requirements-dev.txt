@@ -1,8 +1,8 @@
 # Development / CI-only dependencies for the Agrovix AgOS API.
 
 # Testing
-pytest==8.3.4
-pytest-asyncio==0.26.0
+pytest==9.0.3
+pytest-asyncio==1.3.0
 pytest-cov==6.0.0
 pytest-mock==3.14.0
 httpx==0.28.1
@@ -11,11 +11,11 @@ aiosqlite==0.20.0
 
 # Linting / formatting
 ruff==0.8.4
-black==24.10.0
+black==26.3.1
 mypy==1.13.0
 
 # Types
 types-passlib==1.7.7.20240819
 types-python-jose==3.3.4.20240106
 
-requests==2.32.3
+requests==2.33.0

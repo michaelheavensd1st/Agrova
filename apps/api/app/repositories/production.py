@@ -22,7 +22,10 @@ from app.models.production import (
     ProductionBatchTransition,
     ProductionEvent,
     ProductionSite,
+    ProductionSiteStatus,
+    ProductionTransfer,
     ProductionUnit,
+    ProductionUnitStatus,
     ProductionUnitType,
 )
 
@@ -179,6 +182,13 @@ class ProductionUnitRepository:
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_site_and_code(self, *, site_id: uuid.UUID, code: str) -> ProductionUnit | None:
+        stmt = select(ProductionUnit).where(
+            ProductionUnit.site_id == site_id,
+            ProductionUnit.code == code,
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def list_for_site(self, site_id: uuid.UUID) -> Sequence[ProductionUnit]:
         stmt = (
             select(ProductionUnit)
@@ -186,6 +196,49 @@ class ProductionUnitRepository:
             .order_by(ProductionUnit.name.asc())
         )
         return (await self.session.execute(stmt)).scalars().all()
+
+    async def list_eligible_transfer_destinations(
+        self, *, farm_id: uuid.UUID, exclude_unit_id: uuid.UUID
+    ) -> Sequence[tuple[ProductionUnit, ProductionSite]]:
+        """Return active transfer destinations inside an authoritative farm scope."""
+        stmt = (
+            select(ProductionUnit, ProductionSite)
+            .join(ProductionSite, ProductionSite.id == ProductionUnit.site_id)
+            .where(
+                ProductionSite.farm_id == farm_id,
+                ProductionSite.deleted_at.is_(None),
+                ProductionSite.status == ProductionSiteStatus.ACTIVE,
+                ProductionUnit.id != exclude_unit_id,
+                ProductionUnit.deleted_at.is_(None),
+                ProductionUnit.status == ProductionUnitStatus.ACTIVE,
+            )
+            .order_by(
+                ProductionSite.code.asc(),
+                ProductionUnit.code.asc(),
+                ProductionUnit.name.asc(),
+            )
+        )
+        return (await self.session.execute(stmt)).all()
+
+    async def get_eligible_transfer_destination(
+        self, *, unit_id: uuid.UUID, farm_id: uuid.UUID, exclude_unit_id: uuid.UUID
+    ) -> tuple[ProductionUnit, ProductionSite] | None:
+        """Resolve one destination without looking outside the authoritative farm."""
+        stmt = (
+            select(ProductionUnit, ProductionSite)
+            .join(ProductionSite, ProductionSite.id == ProductionUnit.site_id)
+            .where(
+                ProductionUnit.id == unit_id,
+                ProductionSite.farm_id == farm_id,
+                ProductionSite.deleted_at.is_(None),
+                ProductionSite.status == ProductionSiteStatus.ACTIVE,
+                ProductionUnit.id != exclude_unit_id,
+                ProductionUnit.deleted_at.is_(None),
+                ProductionUnit.status == ProductionUnitStatus.ACTIVE,
+            )
+        )
+        row = (await self.session.execute(stmt)).one_or_none()
+        return (row[0], row[1]) if row is not None else None
 
     async def soft_delete(self, unit: ProductionUnit) -> None:
         now = datetime.now(UTC)
@@ -254,6 +307,63 @@ class ProductionBatchRepository:
             .execution_options(populate_existing=True)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def lock_pair(
+        self, first: uuid.UUID, second: uuid.UUID
+    ) -> dict[uuid.UUID, ProductionBatch]:
+        """Lock both batches in UUID order so opposite transfers cannot deadlock."""
+        ids = sorted((first, second), key=str)
+        stmt = (
+            select(ProductionBatch)
+            .where(ProductionBatch.id.in_(ids), ProductionBatch.deleted_at.is_(None))
+            .order_by(ProductionBatch.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        rows = (await self.session.execute(stmt)).scalars().all()
+        return {row.id: row for row in rows}
+
+    async def list_eligible_transfer_batches(
+        self, *, farm_id: uuid.UUID, exclude_batch_id: uuid.UUID, exclude_unit_id: uuid.UUID
+    ) -> Sequence[tuple[ProductionBatch, ProductionUnit, ProductionSite]]:
+        stmt = (
+            select(ProductionBatch, ProductionUnit, ProductionSite)
+            .join(ProductionUnit, ProductionUnit.id == ProductionBatch.unit_id)
+            .join(ProductionSite, ProductionSite.id == ProductionUnit.site_id)
+            .where(
+                ProductionSite.farm_id == farm_id,
+                ProductionSite.deleted_at.is_(None),
+                ProductionSite.status == ProductionSiteStatus.ACTIVE,
+                ProductionUnit.id != exclude_unit_id,
+                ProductionUnit.deleted_at.is_(None),
+                ProductionUnit.status == ProductionUnitStatus.ACTIVE,
+                ProductionBatch.id != exclude_batch_id,
+                ProductionBatch.deleted_at.is_(None),
+                ProductionBatch.state.in_(
+                    [ProductionBatchState.STOCKED, ProductionBatchState.ACTIVE]
+                ),
+            )
+            .order_by(ProductionSite.code, ProductionUnit.code, ProductionBatch.code)
+        )
+        rows = (await self.session.execute(stmt)).all()
+        return [(row[0], row[1], row[2]) for row in rows]
+
+    async def resolve_transfer_destination(
+        self, *, batch_id: uuid.UUID, unit_id: uuid.UUID, farm_id: uuid.UUID
+    ) -> tuple[ProductionBatch, ProductionUnit, ProductionSite] | None:
+        stmt = (
+            select(ProductionBatch, ProductionUnit, ProductionSite)
+            .join(ProductionUnit, ProductionUnit.id == ProductionBatch.unit_id)
+            .join(ProductionSite, ProductionSite.id == ProductionUnit.site_id)
+            .where(
+                ProductionBatch.id == batch_id,
+                ProductionBatch.unit_id == unit_id,
+                ProductionBatch.deleted_at.is_(None),
+                ProductionSite.farm_id == farm_id,
+            )
+        )
+        row = (await self.session.execute(stmt)).one_or_none()
+        return tuple(row) if row else None
 
     async def list_for_unit(self, unit_id: uuid.UUID) -> Sequence[ProductionBatch]:
         stmt = (
@@ -367,6 +477,28 @@ class ProductionEventRepository:
         await self.session.flush()
         return row
 
+    async def create_transfer(self, **kwargs: object) -> ProductionTransfer:
+        row = ProductionTransfer(created_at=datetime.now(UTC), **kwargs)
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    async def get_transfer_by_source_key(
+        self, source_batch_id: uuid.UUID, idempotency_key: str
+    ) -> ProductionTransfer | None:
+        stmt = select(ProductionTransfer).where(
+            ProductionTransfer.source_batch_id == source_batch_id,
+            ProductionTransfer.idempotency_key == idempotency_key,
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_transfer_event(self, transfer_id: uuid.UUID, role: str) -> ProductionEvent | None:
+        stmt = select(ProductionEvent).where(
+            ProductionEvent.transfer_id == transfer_id,
+            ProductionEvent.transfer_role == role,
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def get_by_id(self, event_id: uuid.UUID) -> ProductionEvent | None:
         return (
             await self.session.execute(
@@ -430,15 +562,20 @@ class ProductionEventRepository:
         return rows, next_cursor
 
     async def list_all_for_batch_asc(self, batch_id: uuid.UUID) -> list[ProductionEvent]:
-        """Return every event for a batch in insertion order (asc).
+        """Return every event in authoritative projection order (asc).
 
-        Used by :func:`compute_batch_projections` — must reflect the
-        physical timeline so "latest" wins on later events.
+        ``performed_at`` is operator chronology. Persisted, immutable
+        ``created_at`` is insertion chronology for equal performed times;
+        ``id`` is only a final deterministic tie-breaker.
         """
         stmt = (
             select(ProductionEvent)
             .where(ProductionEvent.batch_id == batch_id)
-            .order_by(ProductionEvent.performed_at.asc(), ProductionEvent.id.asc())
+            .order_by(
+                ProductionEvent.performed_at.asc(),
+                ProductionEvent.created_at.asc(),
+                ProductionEvent.id.asc(),
+            )
         )
         return list((await self.session.execute(stmt)).scalars().all())
 

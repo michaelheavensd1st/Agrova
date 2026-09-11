@@ -240,6 +240,7 @@ async def list_warehouses(
     user: CurrentUser,
     session: DBSession,
     warehouse_repo: Annotated[WarehouseRepository, Depends(get_warehouse_repo)],
+    operational_only: bool = False,
 ) -> list[WarehousePublic]:
     await _assert_org_membership(session, user, organization_id)
     await _enforce_prod_permission(
@@ -249,7 +250,7 @@ async def list_warehouses(
         organization_id=organization_id,
         farm_id=None,
     )
-    rows = await warehouse_repo.list_for_org(organization_id)
+    rows = await warehouse_repo.list_for_org(organization_id, operational_only=operational_only)
     # Non-superuser farm-member visibility: hide warehouses pinned to
     # farms the caller can't access. Org-shared and unpinned ones show.
     if not user.is_superuser:
@@ -427,10 +428,12 @@ async def list_items(
     user: CurrentUser,
     session: DBSession,
     item_repo: Annotated[InventoryItemRepository, Depends(get_item_repo)],
+    operational_only: bool = False,
 ) -> list[InventoryItemPublic]:
     await _assert_org_membership(session, user, organization_id)
     return [
-        InventoryItemPublic.model_validate(r) for r in await item_repo.list_for_org(organization_id)
+        InventoryItemPublic.model_validate(r)
+        for r in await item_repo.list_for_org(organization_id, operational_only=operational_only)
     ]
 
 

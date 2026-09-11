@@ -224,7 +224,7 @@ describe('Production Batch creation', () => {
     expect(JSON.parse(String(post?.[1]?.body))).toEqual({
       code: 'BATCH-001',
       species: 'L. vannamei',
-      planned_at: '2026-08-04T10:30:00.000Z',
+      planned_at: new Date('2026-08-04T10:30').toISOString(),
       expected_quantity: 5000,
       notes: 'First cycle',
     });

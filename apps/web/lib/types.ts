@@ -96,6 +96,8 @@ export interface ProductionEvent {
   batch_id: UUID;
   event_type: string;
   event_type_version: number;
+  transfer_id: UUID | null;
+  transfer_role: 'out' | 'in' | null;
   performed_by_id: UUID | null;
   performed_at: ISODate;
   data: Record<string, unknown>;
@@ -126,6 +128,7 @@ export interface BatchProjections {
   cumulative_mortality: number;
   cumulative_harvest: number;
   cumulative_transfer_out: number;
+  cumulative_transfer_in: number;
   estimated_remaining_population: number;
   latest_average_weight: number | null;
   weight_unit: string | null;

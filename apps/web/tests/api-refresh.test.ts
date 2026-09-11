@@ -192,6 +192,21 @@ describe('apiFetch session refresh', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['/v1/auth/recovery/request', '/v1/auth/recovery/reset'])(
+    'does not refresh the public recovery endpoint %s',
+    async (path) => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(401, { detail: 'rejected' }));
+      vi.stubGlobal('fetch', fetchMock);
+      const { apiFetch } = await import('@/lib/api');
+
+      await expect(apiFetch(path, { method: 'POST', body: '{}' })).rejects.toMatchObject({
+        status: 401,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][0]).toBe(`${API}${path}`);
+    },
+  );
+
   it('does not refresh non-401 responses or retry unsafe requests without an idempotency key', async () => {
     const fetchMock = vi
       .fn()

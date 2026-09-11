@@ -240,6 +240,7 @@ def transfer_payload(
     *,
     source_unit_id: str,
     destination_unit_id: str,
+    destination_batch_id: str | None = None,
     quantity: int = 100,
     average_weight: float | None = 2.8,
     weight_unit: str = "g",
@@ -248,6 +249,7 @@ def transfer_payload(
     body: dict = {
         "source_unit_id": source_unit_id,
         "destination_unit_id": destination_unit_id,
+        "destination_batch_id": destination_batch_id or str(uuid4()),
         "quantity": quantity,
         "weight_unit": weight_unit,
         "transfer_loss": transfer_loss,

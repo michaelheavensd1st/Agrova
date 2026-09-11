@@ -34,6 +34,7 @@ from app.repositories.org_repo import (
     OrganizationMembershipRepository,
     OrganizationRepository,
 )
+from app.repositories.password_recovery import PasswordRecoveryTokenRepository
 from app.repositories.refresh_token_repo import RefreshTokenRepository
 from app.repositories.role_repo import (
     PermissionRepository,
@@ -43,9 +44,11 @@ from app.repositories.role_repo import (
 from app.repositories.user_repo import UserRepository
 from app.repositories.verification_repo import VerificationTokenRepository
 from app.security.authorize import has_permission, resolve_permissions
+from app.services.admin_user_service import AdminUserService
 from app.services.auth_service import AuthService
 from app.services.invitation_service import InvitationService, RoleAssignmentService
 from app.services.organization_service import FarmService, OrganizationService
+from app.services.password_recovery import PasswordRecoveryKernel, PasswordRecoveryService
 
 _settings = get_settings()
 
@@ -64,6 +67,10 @@ def get_user_repository(session: DBSession) -> UserRepository:
 
 def get_refresh_token_repository(session: DBSession) -> RefreshTokenRepository:
     return RefreshTokenRepository(session)
+
+
+def get_password_recovery_repository(session: DBSession) -> PasswordRecoveryTokenRepository:
+    return PasswordRecoveryTokenRepository(session)
 
 
 def get_verification_repository(session: DBSession) -> VerificationTokenRepository:
@@ -133,6 +140,44 @@ def get_auth_service(
         verification_repo=verification_repo,
         email_sender=email_sender,
         rate_limiter=rate_limiter,
+    )
+
+
+def get_password_recovery_service(
+    user_repo: Annotated[UserRepository, Depends(get_user_repository)],
+    token_repo: Annotated[
+        PasswordRecoveryTokenRepository, Depends(get_password_recovery_repository)
+    ],
+    refresh_repo: Annotated[RefreshTokenRepository, Depends(get_refresh_token_repository)],
+    audit_repo: Annotated[AuditRepository, Depends(get_audit_repository)],
+    email_sender: Annotated[EmailSender, Depends(get_email_sender_dep)],
+    rate_limiter: Annotated[RateLimiter, Depends(get_rate_limiter_dep)],
+) -> PasswordRecoveryService:
+    kernel = PasswordRecoveryKernel(user_repo=user_repo, token_repo=token_repo)
+    return PasswordRecoveryService(
+        kernel=kernel,
+        user_repo=user_repo,
+        token_repo=token_repo,
+        refresh_repo=refresh_repo,
+        audit_repo=audit_repo,
+        rate_limiter=rate_limiter,
+        email_sender=email_sender,
+    )
+
+
+def get_admin_user_service(
+    user_repo: Annotated[UserRepository, Depends(get_user_repository)],
+    recovery_repo: Annotated[
+        PasswordRecoveryTokenRepository, Depends(get_password_recovery_repository)
+    ],
+    refresh_repo: Annotated[RefreshTokenRepository, Depends(get_refresh_token_repository)],
+    audit_repo: Annotated[AuditRepository, Depends(get_audit_repository)],
+) -> AdminUserService:
+    return AdminUserService(
+        user_repo=user_repo,
+        recovery_repo=recovery_repo,
+        refresh_repo=refresh_repo,
+        audit_repo=audit_repo,
     )
 
 
@@ -248,6 +293,13 @@ async def get_current_user(
 
     user = await user_repo.get_by_id(user_id)
     if user is None or not user.is_active or user.deleted_at is not None:
+        raise _unauthorized()
+    token_session_version = payload.get("sv", 0)
+    if (
+        type(token_session_version) is not int
+        or token_session_version < 0
+        or token_session_version != user.session_version
+    ):
         raise _unauthorized()
     user_id_var.set(str(user.id))
     return user

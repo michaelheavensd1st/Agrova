@@ -32,7 +32,7 @@ import re
 import sys
 
 from app.core.config import get_settings
-from app.core.security import hash_password
+from app.core.security import hash_password, verify_password
 from app.repositories.role_repo import RoleAssignmentRepository, RoleRepository
 from app.repositories.user_repo import UserRepository
 from app.seed import seed_permissions_and_roles
@@ -72,7 +72,9 @@ async def _create_admin(email: str, password: str) -> None:
         role_repo = RoleRepository(session)
         role_assign_repo = RoleAssignmentRepository(session)
 
-        user = await user_repo.get_by_email(email)
+        user = await user_repo.get_by_email_for_update(email)
+        existing_user = user is not None
+        security_state_changed = False
         if user is None:
             user = await user_repo.create(
                 email=email,
@@ -80,9 +82,14 @@ async def _create_admin(email: str, password: str) -> None:
                 full_name="Platform Administrator",
             )
         else:
-            user.hashed_password = hash_password(password)
-            session.add(user)
-            await session.flush()
+            password_changed = user.hashed_password is None or not verify_password(
+                password, user.hashed_password
+            )
+            security_state_changed = password_changed or any(
+                (not user.is_active, not user.is_verified, not user.is_superuser)
+            )
+            if password_changed:
+                await user_repo.set_password_hash(user, hash_password(password))
 
         user.is_active = True
         user.is_verified = True
@@ -112,6 +119,9 @@ async def _create_admin(email: str, password: str) -> None:
                 farm_id=None,
                 granted_by_id=user.id,
             )
+            security_state_changed = existing_user
+        if existing_user and security_state_changed:
+            await user_repo.increment_session_version(user)
         await session.commit()
         print(f"Platform administrator ready: {email}")
 

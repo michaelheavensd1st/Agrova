@@ -23,7 +23,7 @@ const FEED_ITEM_ID = '22222222-2222-4222-8222-222222222222';
 
 function mockEligibleLot() {
   vi.mocked(apiFetch).mockImplementation(async (path) => {
-    if (path.endsWith('/warehouses'))
+    if (path.endsWith('/warehouses?operational_only=true'))
       return [
         {
           id: 'warehouse-1',
@@ -34,7 +34,7 @@ function mockEligibleLot() {
           status: 'active',
         },
       ] as never;
-    if (path.endsWith('/inventory-items'))
+    if (path.endsWith('/inventory-items?operational_only=true'))
       return [
         {
           id: FEED_ITEM_ID,
@@ -99,6 +99,12 @@ describe('FeedingForm', () => {
       event_type: 'FEEDING',
       data: { inventory_lot_id: FEED_LOT_ID },
     });
+    expect(apiFetch).toHaveBeenCalledWith(
+      '/v1/organizations/org-1/warehouses?operational_only=true',
+    );
+    expect(apiFetch).toHaveBeenCalledWith(
+      '/v1/organizations/org-1/inventory-items?operational_only=true',
+    );
   });
 
   it('cannot submit arbitrary text as inventory_lot_id', async () => {
@@ -127,7 +133,11 @@ describe('FeedingForm', () => {
 
   it('shows a clear state when no eligible lots exist', async () => {
     vi.mocked(apiFetch).mockImplementation(async (path) => {
-      if (path.endsWith('/warehouses') || path.endsWith('/inventory-items')) return [] as never;
+      if (
+        path.endsWith('/warehouses?operational_only=true') ||
+        path.endsWith('/inventory-items?operational_only=true')
+      )
+        return [] as never;
       throw new Error(`Unexpected request: ${path}`);
     });
     renderFeeding();

@@ -1008,8 +1008,7 @@ async def test_posted_receipt_is_database_closed_after_commit(db_session, _engin
             async with factory() as attempted, attempted.begin():
                 await attempted.execute(text(statement), {"id": target_id})
 
-    append_statement = text(
-        """
+    append_statement = text("""
         INSERT INTO public.purchase_receipt_lines
           (id, purchase_receipt_id, line_number, purchase_order_line_id,
            inventory_item_id, warehouse_id, storage_location_id, inventory_lot_id,
@@ -1021,8 +1020,7 @@ async def test_posted_receipt_is_database_closed_after_commit(db_session, _engin
                lot_code, expiry_date, quantity, ordered_unit, quantity_canonical,
                canonical_unit, unit_price, currency_code, now()
         FROM public.purchase_receipt_lines WHERE id = :line_id
-        """
-    )
+        """)
     for shadow, transaction_id, offset in (
         (False, unused_transaction_ids[0], 100),
         (True, unused_transaction_ids[1], 200),
@@ -1069,8 +1067,7 @@ async def test_payload_hash_database_constraint_is_lowercase_sha256(db_session, 
         with pytest.raises(IntegrityError):
             async with factory() as attempted, attempted.begin():
                 await attempted.execute(
-                    text(
-                        """
+                    text("""
                         INSERT INTO purchase_receipts
                           (id, organization_id, farm_id, purchase_order_id, warehouse_id,
                            grn, supplier_delivery_reference, received_at, received_by_id,
@@ -1080,8 +1077,7 @@ async def test_payload_hash_database_constraint_is_lowercase_sha256(db_session, 
                                received_at, received_by_id, notes,
                                idempotency_key || :suffix, :payload_hash, now()
                         FROM purchase_receipts WHERE id = :receipt_id
-                        """
-                    ),
+                        """),
                     {
                         "suffix": f"-{suffix}",
                         "payload_hash": invalid_hash,

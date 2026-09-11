@@ -38,6 +38,17 @@ class ResendVerificationRequest(BaseModel):
     email: EmailStr
 
 
+class PasswordRecoveryRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    email: EmailStr
+
+
+class PasswordRecoveryResetRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    token: str = Field(..., min_length=32, max_length=256)
+    new_password: str = Field(..., min_length=_settings.password_min_length, max_length=128)
+
+
 class TokenPair(BaseModel):
     """Legacy body-token response.
 

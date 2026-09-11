@@ -3,14 +3,35 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch, ApiError } from '@/lib/api';
+import { safeAdminReturnTo } from '@/lib/admin-users';
 
 type Mode = 'login' | 'register';
 
 interface Props {
   mode: Mode;
+  returnTo?: string | null;
 }
 
-export function AuthForm({ mode }: Props) {
+function boundedAuthError(error: unknown, mode: Mode): string {
+  if (!(error instanceof ApiError)) {
+    return 'The authentication service is unavailable. Please try again.';
+  }
+  if (error.status === 401 && mode === 'login') {
+    return 'The email or password is incorrect.';
+  }
+  if (error.status === 422) {
+    return 'Check the information you entered and try again.';
+  }
+  if (error.status === 429) {
+    return 'Too many attempts. Please wait and try again.';
+  }
+  if (error.status >= 500) {
+    return 'The authentication service is unavailable. Please try again.';
+  }
+  return 'Unable to complete authentication. Please try again.';
+}
+
+export function AuthForm({ mode, returnTo }: Props) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,14 +60,10 @@ export function AuthForm({ mode }: Props) {
       if (mode === 'register') {
         router.push('/verify');
       } else {
-        router.push('/dashboard');
+        router.push(safeAdminReturnTo(returnTo) ?? '/dashboard');
       }
     } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.payload.detail ?? 'Something went wrong.');
-      } else {
-        setError('Unable to reach the API. Is the backend running?');
-      }
+      setError(boundedAuthError(err, mode));
     } finally {
       setSubmitting(false);
     }

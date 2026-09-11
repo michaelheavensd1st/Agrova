@@ -9,7 +9,7 @@ import pytest
 from httpx import AsyncClient
 
 from app.core.config import get_settings
-from app.core.security import create_token, hash_password
+from app.core.security import create_token, decode_token, hash_password
 from app.models.user import User
 
 
@@ -78,6 +78,9 @@ async def test_refresh_token_rotation_and_revocation(client: AsyncClient) -> Non
     # First refresh — succeeds, rotates.
     r1 = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_cookie})
     assert r1.status_code == 200, r1.text
+    replacement_access = r1.cookies.get(settings.cookie_access_name)
+    assert replacement_access is not None
+    assert decode_token(replacement_access, expected_type="access")["sv"] == 0
 
     # Reuse of the ORIGINAL refresh — must now be revoked.
     r2 = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_cookie})

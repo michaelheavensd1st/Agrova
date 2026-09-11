@@ -1,7 +1,12 @@
 import Link from 'next/link';
 
-export default function VerifyPage({ searchParams }: { searchParams: { token?: string } }) {
-  const token = searchParams?.token;
+export default async function VerifyPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ token?: string }>;
+}) {
+  const resolvedSearchParams = await searchParams;
+  const token = resolvedSearchParams?.token;
   return (
     <main
       className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12"

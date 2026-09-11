@@ -84,6 +84,7 @@ class BatchProjectionsPublic(BaseModel):
     cumulative_mortality: int
     cumulative_harvest: int
     cumulative_transfer_out: int
+    cumulative_transfer_in: int
     estimated_remaining_population: int
     latest_average_weight: float | None
     weight_unit: str | None
@@ -232,6 +233,14 @@ class ProductionEventCreate(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
 
 
+class TransferDestinationPublic(BaseModel):
+    """Explicit eligible destination batch with an authoritative unit label."""
+
+    id: UUID
+    unit_id: UUID
+    label: str
+
+
 class ProductionEventPublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -243,6 +252,8 @@ class ProductionEventPublic(BaseModel):
     batch_id: UUID
     event_type: str
     event_type_version: int
+    transfer_id: UUID | None = None
+    transfer_role: str | None = None
     performed_by_id: UUID | None
     performed_at: datetime
     data: dict

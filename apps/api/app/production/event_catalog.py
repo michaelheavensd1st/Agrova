@@ -233,6 +233,7 @@ class TransferEventSchema(_StrictModel):
 
     source_unit_id: str = Field(min_length=1)
     destination_unit_id: str = Field(min_length=1)
+    destination_batch_id: str = Field(min_length=1)
     quantity: int = Field(ge=1, description="Individuals transferred (net).")
     average_weight: float | None = Field(default=None, ge=0)
     weight_unit: WeightUnit = Field(default=WeightUnit.G)
@@ -438,11 +439,12 @@ CATALOG.register(
 CATALOG.register(
     "TRANSFER",
     TransferEventSchema,
-    version=2,
+    version=3,
     display_name="Transfer",
     openapi_example={
         "source_unit_id": "1c0c4bcf-16f7-4e9f-8b40-3a0f7a1c1a11",
         "destination_unit_id": "9f16f74c-9c2c-4e57-8bde-b3a9f0e6b2a5",
+        "destination_batch_id": "6f98d0ec-442e-4f61-b8ba-a819c3d4e22b",
         "quantity": 5000,
         "average_weight": 2.8,
         "weight_unit": "g",

@@ -430,6 +430,11 @@ function InventoryItemDetailInner() {
 
   const warehousesById = useMemo(() => new Map(warehouses.map((w) => [w.id, w])), [warehouses]);
 
+  const operationalWarehouses = useMemo(
+    () => warehouses.filter((warehouse) => warehouse.status !== 'closed'),
+    [warehouses],
+  );
+
   const activeOrg = useMemo(() => orgs?.find((o) => o.id === orgId) ?? null, [orgs, orgId]);
 
   // ---- Edit + status ------------------------------------------------ //
@@ -674,7 +679,7 @@ function InventoryItemDetailInner() {
               type={activeStockOp}
               organizationId={orgId}
               item={item}
-              warehouses={warehouses}
+              warehouses={operationalWarehouses}
               lots={lots}
               reversalTx={
                 activeStockOp === 'reverse' && reversalTx

@@ -27,6 +27,7 @@ from app.models.inventory import (
 from app.models.invitation import Invitation, InvitationStatus
 from app.models.membership import FarmMembership, OrganizationMembership
 from app.models.organization import Organization
+from app.models.password_recovery import PasswordRecoveryToken
 from app.models.production import (
     ProductionBatch,
     ProductionBatchState,
@@ -34,6 +35,8 @@ from app.models.production import (
     ProductionEvent,
     ProductionSite,
     ProductionSiteStatus,
+    ProductionTransfer,
+    ProductionTransferRole,
     ProductionUnit,
     ProductionUnitStatus,
     ProductionUnitType,
@@ -83,6 +86,7 @@ __all__ = [
     "InvitationStatus",
     "Organization",
     "OrganizationMembership",
+    "PasswordRecoveryToken",
     "Permission",
     "ProductionBatch",
     "ProductionBatchState",
@@ -90,6 +94,8 @@ __all__ = [
     "ProductionEvent",
     "ProductionSite",
     "ProductionSiteStatus",
+    "ProductionTransfer",
+    "ProductionTransferRole",
     "ProductionUnit",
     "ProductionUnitStatus",
     "ProductionUnitType",

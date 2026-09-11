@@ -418,9 +418,10 @@ export function PurchaseOrderForm({
         search: supplierSearch.trim() || undefined,
         limit: 200,
       }),
-      apiFetch<InventoryItem[]>(`/v1/organizations/${organizationId}/inventory-items`, {
-        signal: controller.signal,
-      }),
+      apiFetch<InventoryItem[]>(
+        `/v1/organizations/${organizationId}/inventory-items?operational_only=true`,
+        { signal: controller.signal },
+      ),
     ])
       .then(([farmRows, partnerPage, itemRows]) => {
         if (generation !== generationRef.current) return;

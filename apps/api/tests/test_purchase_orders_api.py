@@ -682,7 +682,7 @@ async def test_farm_destination_denials_are_indistinguishable_and_atomic(
             (
                 await session.execute(
                     select(PurchaseOrderTransition)
-                    .where(PurchaseOrderTransition.purchase_order_id == po["id"])
+                    .where(PurchaseOrderTransition.purchase_order_id == UUID(po["id"]))
                     .order_by(PurchaseOrderTransition.id)
                 )
             ).scalars()
@@ -781,7 +781,7 @@ async def test_farm_destination_denials_are_indistinguishable_and_atomic(
             (
                 await session.execute(
                     select(PurchaseOrderTransition)
-                    .where(PurchaseOrderTransition.purchase_order_id == po["id"])
+                    .where(PurchaseOrderTransition.purchase_order_id == UUID(po["id"]))
                     .order_by(PurchaseOrderTransition.id)
                 )
             ).scalars()

@@ -162,6 +162,25 @@ beforeEach(() => {
 });
 
 describe('PurchaseOrderForm semantics', () => {
+  it('loads only operational inventory items for line selectors', async () => {
+    render(
+      <PurchaseOrderForm
+        mode="create"
+        organizationId="org-1"
+        submitting={false}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(mockedApiFetch).toHaveBeenCalledWith(
+        '/v1/organizations/org-1/inventory-items?operational_only=true',
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      ),
+    );
+  });
+
   it('restricts create and edit farm choices to the applicable scoped permission', async () => {
     mockedApiFetch.mockImplementation((path: string) => {
       if (path.includes('/farms'))

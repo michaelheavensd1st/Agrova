@@ -90,6 +90,16 @@ async def _prepare_active_batch(client: AsyncClient, quantity: int = 1000) -> di
     return ctx
 
 
+async def _prepare_receiving_batch(client: AsyncClient, unit_id: str, quantity: int = 1) -> str:
+    batch_id = await _create_batch(client, unit_id)
+    response = await client.post(
+        f"/api/v1/batches/{batch_id}/events",
+        json={"event_type": "STOCKING", "data": stocking_payload(quantity=quantity)},
+    )
+    assert response.status_code == 201, response.text
+    return str(batch_id)
+
+
 # ===================================================================== #
 # 1. Permission enforcement (runs on SQLite too)
 # ===================================================================== #
@@ -404,8 +414,8 @@ async def test_transfer_into_maintenance_destination_blocked(client: AsyncClient
             ),
         },
     )
-    assert r.status_code == 409, r.text
-    assert r.json()["detail"]["code"] == "transfer_destination_under_maintenance"
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["code"] == "transfer_destination_ineligible"
 
 
 # ===================================================================== #
@@ -566,6 +576,7 @@ async def test_evacuation_transfer_still_works_from_maintenance(
     """MAINTENANCE unit still permits an evacuating TRANSFER out."""
     ctx = await _prepare_active_batch(client, quantity=100)
     dst_unit_id = await _create_unit(client, ctx["site_id"], ctx["unit_type_id"])
+    dst_batch_id = await _prepare_receiving_batch(client, dst_unit_id)
     r = await client.patch(f"/api/v1/units/{ctx['unit_id']}", json={"status": "maintenance"})
     assert r.status_code == 200, r.text
     r = await client.post(
@@ -575,6 +586,7 @@ async def test_evacuation_transfer_still_works_from_maintenance(
             "data": transfer_payload(
                 source_unit_id=ctx["unit_id"],
                 destination_unit_id=dst_unit_id,
+                destination_batch_id=dst_batch_id,
                 quantity=10,
             ),
         },
@@ -845,12 +857,14 @@ async def test_concurrent_transfers_never_overshoot(client: AsyncClient) -> None
     """Two transfers that together exceed remaining → one succeeds."""
     ctx = await _prepare_active_batch(client, quantity=100)
     dst_unit_id = await _create_unit(client, ctx["site_id"], ctx["unit_type_id"])
+    dst_batch_id = await _prepare_receiving_batch(client, dst_unit_id)
 
     body = {
         "event_type": "TRANSFER",
         "data": transfer_payload(
             source_unit_id=ctx["unit_id"],
             destination_unit_id=dst_unit_id,
+            destination_batch_id=dst_batch_id,
             quantity=60,
         ),
     }

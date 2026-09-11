@@ -26,6 +26,7 @@ import {
   isWarehouseInCurrentOrg,
   resolveOrganizationId,
 } from '@/lib/inventory-dashboard';
+import { isWarehouseEligibleForStockOperation } from '@/lib/stock-operations';
 import {
   ConfirmDialog,
   EmptyStateCard,
@@ -124,6 +125,8 @@ function InventoryInner() {
   const [orgId, setOrgId] = useState<string>('');
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [operationalWarehouses, setOperationalWarehouses] = useState<Warehouse[]>([]);
+  const [operationalItems, setOperationalItems] = useState<InventoryItem[]>([]);
   const [selectedWh, setSelectedWh] = useState<string>('');
   const [lots, setLots] = useState<Lot[]>([]);
   const [history, setHistory] = useState<LedgerTx[]>([]);
@@ -218,6 +221,8 @@ function InventoryInner() {
           historyGenerationRef.current += 1;
           setWarehouses([]);
           setItems([]);
+          setOperationalWarehouses([]);
+          setOperationalItems([]);
           setLots([]);
           setHistory([]);
           setSelectedWh('');
@@ -289,13 +294,21 @@ function InventoryInner() {
     const isCurrent = () => orgGenerationRef.current === generation && capturedOrgId === orgId;
     setLoadingOrg(true);
     try {
-      const [wh, it] = await Promise.all([
+      const [wh, it, operationalWh, operationalIt] = await Promise.all([
         apiFetch<Warehouse[]>(`/v1/organizations/${capturedOrgId}/warehouses`),
         apiFetch<InventoryItem[]>(`/v1/organizations/${capturedOrgId}/inventory-items`),
+        apiFetch<Warehouse[]>(
+          `/v1/organizations/${capturedOrgId}/warehouses?operational_only=true`,
+        ),
+        apiFetch<InventoryItem[]>(
+          `/v1/organizations/${capturedOrgId}/inventory-items?operational_only=true`,
+        ),
       ]);
       if (!isCurrent()) return;
       setWarehouses(wh);
       setItems(it);
+      setOperationalWarehouses(operationalWh);
+      setOperationalItems(operationalIt);
       // A successful org reload clears any stale org-scope 403 banner.
       setForbidden((f) => (f?.scope === 'org' ? null : f));
       // Sprint 5.1 review round #2 — after an organization switch we
@@ -304,7 +317,11 @@ function InventoryInner() {
       // the initial load; the org-reset effect below clears
       // selectedWh right before reloadOrg runs, so this branch now
       // covers both first-load AND org-switch.
-      if (wh.length > 0) setSelectedWh((current) => (current ? current : wh[0].id));
+      setSelectedWh((current) =>
+        operationalWh.some((warehouse) => warehouse.id === current)
+          ? current
+          : (operationalWh[0]?.id ?? ''),
+      );
     } catch (e) {
       if (handleLoadError(e, 'org', isCurrent) === 'auth') return;
       if (!isCurrent()) return;
@@ -367,6 +384,8 @@ function InventoryInner() {
     historyGenerationRef.current += 1;
     setWarehouses([]);
     setItems([]);
+    setOperationalWarehouses([]);
+    setOperationalItems([]);
     setSelectedWh('');
     setLots([]);
     setSelectedLot('');
@@ -413,19 +432,29 @@ function InventoryInner() {
       });
   }, [selectedLot, selectedWh, orgId, handleLoadError]);
 
+  const operationalItemIds = useMemo(
+    () => new Set(operationalItems.map((item) => item.id)),
+    [operationalItems],
+  );
+
+  const operationalLots = useMemo(
+    () => lots.filter((lot) => operationalItemIds.has(lot.item_id)),
+    [lots, operationalItemIds],
+  );
+
   const totalBalanceByItem = useMemo(() => {
     const acc = new Map<string, { balance: number; unit: string; name: string }>();
-    for (const lot of lots) {
-      const item = items.find((i) => i.id === lot.item_id);
+    for (const lot of operationalLots) {
+      const item = operationalItems.find((i) => i.id === lot.item_id);
       const name = item?.name ?? lot.item_id;
       const prev = acc.get(name) ?? { balance: 0, unit: lot.balance_unit, name };
       prev.balance += Number(lot.balance);
       acc.set(name, prev);
     }
     return Array.from(acc.values());
-  }, [items, lots]);
+  }, [operationalItems, operationalLots]);
 
-  const currentWh = warehouses.find((w) => w.id === selectedWh) ?? null;
+  const currentWh = operationalWarehouses.find((w) => w.id === selectedWh) ?? null;
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'overview', label: 'Overview' },
@@ -501,9 +530,9 @@ function InventoryInner() {
           {tab === 'overview' && (
             <OverviewPanel
               loading={loadingOrg}
-              warehouses={warehouses}
-              items={items}
-              lots={lots}
+              warehouses={operationalWarehouses}
+              items={operationalItems}
+              lots={operationalLots}
               balances={totalBalanceByItem}
               onCreateWarehouse={() => setTab('warehouses')}
               onCreateItem={() => setTab('items')}
@@ -517,8 +546,14 @@ function InventoryInner() {
               warehouses={warehouses}
               onChange={reloadOrg}
               onSelect={(id) => {
-                setSelectedWh(id);
-                setTab('lots');
+                if (operationalWarehouses.some((warehouse) => warehouse.id === id)) {
+                  setSelectedWh(id);
+                  setTab('lots');
+                  return;
+                }
+                router.push(
+                  `/inventory/warehouses/${id}?organization_id=${encodeURIComponent(orgId)}`,
+                );
               }}
             />
           )}
@@ -533,7 +568,7 @@ function InventoryInner() {
             ) : (
               <LotsPanel
                 loading={loadingLots}
-                warehouses={warehouses}
+                warehouses={operationalWarehouses}
                 selectedWh={selectedWh}
                 onSelectWh={setSelectedWh}
                 lots={lots}
@@ -549,8 +584,8 @@ function InventoryInner() {
           {tab === 'receive' && (
             <ReceivePanel
               key={orgId || 'no-org'}
-              warehouses={warehouses}
-              items={items}
+              warehouses={operationalWarehouses}
+              items={operationalItems}
               selectedWh={selectedWh}
               onSelectWh={setSelectedWh}
               onDone={reloadLots}
@@ -562,9 +597,9 @@ function InventoryInner() {
               key={orgId || 'no-org'}
               mode="issue"
               warehouse={currentWh}
-              lots={lots}
-              items={items}
-              warehouses={warehouses}
+              lots={operationalLots}
+              items={operationalItems}
+              warehouses={operationalWarehouses}
               onDone={reloadLots}
             />
           )}
@@ -572,10 +607,10 @@ function InventoryInner() {
           {tab === 'transfer' && (
             <TransferPanel
               key={orgId || 'no-org'}
-              warehouses={warehouses}
+              warehouses={operationalWarehouses}
               warehouse={currentWh}
-              lots={lots}
-              items={items}
+              lots={operationalLots}
+              items={operationalItems}
               onDone={reloadLots}
             />
           )}
@@ -585,9 +620,9 @@ function InventoryInner() {
               key={orgId || 'no-org'}
               mode="adjust"
               warehouse={currentWh}
-              lots={lots}
-              items={items}
-              warehouses={warehouses}
+              lots={operationalLots}
+              items={operationalItems}
+              warehouses={operationalWarehouses}
               onDone={reloadLots}
             />
           )}
@@ -1225,6 +1260,9 @@ function ReceivePanel({
   const [qty, setQty] = useState('');
   const [unit, setUnit] = useState<(typeof UNITS)[number]>('kg');
   const [busy, setBusy] = useState(false);
+  const eligibleWarehouses = warehouses.filter((warehouse) =>
+    isWarehouseEligibleForStockOperation(warehouse, 'receive'),
+  );
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -1236,6 +1274,11 @@ function ReceivePanel({
     // clear the offending field.
     if (!isWarehouseInCurrentOrg(selectedWh, warehouses)) {
       toast('Selected warehouse no longer belongs to this organization.', 'error');
+      return;
+    }
+    const selectedWarehouse = warehouses.find((warehouse) => warehouse.id === selectedWh);
+    if (!selectedWarehouse || !isWarehouseEligibleForStockOperation(selectedWarehouse, 'receive')) {
+      toast('Selected warehouse is not available for receiving stock.', 'error');
       return;
     }
     if (!isItemInCurrentOrg(itemId, items)) {
@@ -1289,7 +1332,7 @@ function ReceivePanel({
           value={selectedWh}
           onChange={(e) => onSelectWh(e.target.value)}
         >
-          {warehouses.map((w) => (
+          {eligibleWarehouses.map((w) => (
             <option key={w.id} value={w.id}>
               {w.name}
             </option>
@@ -1390,9 +1433,17 @@ function TxPanel({
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState(false);
+  const warehouseOperation =
+    mode === 'issue' ? 'issue' : direction === 'increase' ? 'adjust-increase' : 'adjust-decrease';
+  const warehouseEligible =
+    warehouse !== null && isWarehouseEligibleForStockOperation(warehouse, warehouseOperation);
 
   async function doSubmit() {
     if (!warehouse) return;
+    if (!isWarehouseEligibleForStockOperation(warehouse, warehouseOperation)) {
+      setPendingConfirm(false);
+      return;
+    }
     // Sprint 5.1 review round #2 — cross-org guardrails.
     if (!isWarehouseInCurrentOrg(warehouse.id, warehouses)) {
       toast('Selected warehouse no longer belongs to this organization.', 'error');
@@ -1435,6 +1486,7 @@ function TxPanel({
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    if (!warehouseEligible) return;
     // Adjust always confirms; Issue confirms when decreasing.
     setPendingConfirm(true);
   }
@@ -1486,7 +1538,20 @@ function TxPanel({
               data-testid="inv-adjust-direction"
               className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1"
               value={direction}
-              onChange={(e) => setDirection(e.target.value as 'increase' | 'decrease')}
+              onChange={(e) => {
+                const nextDirection = e.target.value as 'increase' | 'decrease';
+                setDirection(nextDirection);
+                if (
+                  warehouse &&
+                  !isWarehouseEligibleForStockOperation(
+                    warehouse,
+                    nextDirection === 'increase' ? 'adjust-increase' : 'adjust-decrease',
+                  )
+                ) {
+                  setLotId('');
+                  setPendingConfirm(false);
+                }
+              }}
             >
               <option value="decrease">Decrease</option>
               <option value="increase">Increase</option>
@@ -1536,7 +1601,7 @@ function TxPanel({
         </label>
         <button
           type="submit"
-          disabled={busy || !warehouse || !lotId}
+          disabled={busy || !warehouseEligible || !lotId}
           data-testid={`inv-${mode}-submit`}
           className="col-span-full rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-60"
         >
@@ -1583,10 +1648,12 @@ function TransferPanel({
   const [qty, setQty] = useState('');
   const [unit, setUnit] = useState<(typeof UNITS)[number]>('kg');
   const [busy, setBusy] = useState(false);
+  const sourceEligible =
+    warehouse !== null && isWarehouseEligibleForStockOperation(warehouse, 'transfer-source');
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!warehouse || busy) return;
+    if (!warehouse || busy || !sourceEligible) return;
     // Sprint 5.1 review round #2 — validate source, destination and
     // lot all belong to the currently active organization before
     // POSTing. Prevents a lingering post-org-switch selection from
@@ -1597,6 +1664,14 @@ function TransferPanel({
     }
     if (!isWarehouseInCurrentOrg(dstWh, warehouses)) {
       toast('Destination warehouse no longer belongs to this organization.', 'error');
+      return;
+    }
+    const destinationWarehouse = warehouses.find((candidate) => candidate.id === dstWh);
+    if (
+      !destinationWarehouse ||
+      !isWarehouseEligibleForStockOperation(destinationWarehouse, 'transfer-destination')
+    ) {
+      toast('Destination warehouse is not available for receiving stock.', 'error');
       return;
     }
     if (!isLotInCurrentOrg(lotId, lots, warehouses, items)) {
@@ -1674,7 +1749,11 @@ function TransferPanel({
         >
           <option value="">— select —</option>
           {warehouses
-            .filter((w) => w.id !== warehouse?.id)
+            .filter(
+              (w) =>
+                w.id !== warehouse?.id &&
+                isWarehouseEligibleForStockOperation(w, 'transfer-destination'),
+            )
             .map((w) => (
               <option key={w.id} value={w.id}>
                 {w.name}
@@ -1714,7 +1793,7 @@ function TransferPanel({
       </div>
       <button
         type="submit"
-        disabled={busy || !warehouse || !lotId || !dstWh}
+        disabled={busy || !sourceEligible || !lotId || !dstWh}
         data-testid="inv-transfer-submit"
         className="col-span-full rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-60"
       >

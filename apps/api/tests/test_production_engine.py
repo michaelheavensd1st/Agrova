@@ -180,6 +180,38 @@ async def test_custom_unit_type_lifecycle_and_system_immutability(client: AsyncC
 # 3. ProductionUnit + soft delete + active-batch guard
 # ===================================================================== #
 @pytest.mark.asyncio
+async def test_duplicate_unit_code_in_same_site_returns_sanitized_409(
+    client: AsyncClient,
+) -> None:
+    ctx = await _new_owner_org_farm(client)
+    unit_type = await _pick_system_unit_type_id(client, ctx["org_id"])
+    payload = {
+        "unit_type_id": unit_type,
+        "name": "Duplicate Code Unit",
+        "code": f"DUP-{uuid4().hex[:6]}",
+    }
+
+    first = await client.post(
+        f"/api/v1/sites/{ctx['site_id']}/units",
+        json=payload,
+    )
+    assert first.status_code == 201, first.text
+
+    duplicate = await client.post(
+        f"/api/v1/sites/{ctx['site_id']}/units",
+        json={**payload, "name": "Different Name Same Code"},
+    )
+
+    assert duplicate.status_code == 409, duplicate.text
+    assert duplicate.json() == {
+        "detail": {
+            "code": "production_unit_code_conflict",
+            "message": "A production unit with this code already exists in this site.",
+        }
+    }
+
+
+@pytest.mark.asyncio
 async def test_unit_delete_blocked_while_active_batches_exist(client: AsyncClient) -> None:
     ctx = await _new_owner_org_farm(client)
     ut = await _pick_system_unit_type_id(client, ctx["org_id"])

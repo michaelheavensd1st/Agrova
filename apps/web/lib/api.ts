@@ -35,6 +35,8 @@ const NO_REFRESH_PATHS = new Set([
   '/v1/auth/refresh',
   '/v1/auth/verify',
   '/v1/auth/resend-verification',
+  '/v1/auth/recovery/request',
+  '/v1/auth/recovery/reset',
   '/v1/auth/logout',
 ]);
 

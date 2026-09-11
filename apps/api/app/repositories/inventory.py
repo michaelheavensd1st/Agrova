@@ -20,6 +20,7 @@ from app.models.inventory import (
     InventoryTransactionType,
     StorageLocation,
     Warehouse,
+    WarehouseStatus,
 )
 
 
@@ -110,12 +111,13 @@ class WarehouseRepository:
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
-    async def list_for_org(self, org_id: uuid.UUID) -> Sequence[Warehouse]:
-        stmt = (
-            select(Warehouse)
-            .where(Warehouse.organization_id == org_id, Warehouse.deleted_at.is_(None))
-            .order_by(Warehouse.name)
-        )
+    async def list_for_org(
+        self, org_id: uuid.UUID, *, operational_only: bool = False
+    ) -> Sequence[Warehouse]:
+        predicates = [Warehouse.organization_id == org_id, Warehouse.deleted_at.is_(None)]
+        if operational_only:
+            predicates.append(Warehouse.status != WarehouseStatus.CLOSED)
+        stmt = select(Warehouse).where(*predicates).order_by(Warehouse.name)
         return list((await self.session.execute(stmt)).scalars().all())
 
 
@@ -167,15 +169,16 @@ class InventoryItemRepository:
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
-    async def list_for_org(self, org_id: uuid.UUID) -> Sequence[InventoryItem]:
-        stmt = (
-            select(InventoryItem)
-            .where(
-                InventoryItem.organization_id == org_id,
-                InventoryItem.deleted_at.is_(None),
-            )
-            .order_by(InventoryItem.name)
-        )
+    async def list_for_org(
+        self, org_id: uuid.UUID, *, operational_only: bool = False
+    ) -> Sequence[InventoryItem]:
+        predicates = [
+            InventoryItem.organization_id == org_id,
+            InventoryItem.deleted_at.is_(None),
+        ]
+        if operational_only:
+            predicates.append(InventoryItem.is_active.is_(True))
+        stmt = select(InventoryItem).where(*predicates).order_by(InventoryItem.name)
         return list((await self.session.execute(stmt)).scalars().all())
 
 

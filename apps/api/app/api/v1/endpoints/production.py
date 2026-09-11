@@ -73,6 +73,7 @@ from app.schemas.production import (
     ProductionUnitTypeCreate,
     ProductionUnitTypePublic,
     ProductionUnitUpdate,
+    TransferDestinationPublic,
 )
 from app.security.authorize import has_permission, resolve_permissions
 from app.services.production import (
@@ -1089,6 +1090,30 @@ async def create_event(
     else:
         response.status_code = status.HTTP_201_CREATED
     return ProductionEventPublic.model_validate(event)
+
+
+@router.get(
+    "/batches/{batch_id}/transfer-destinations",
+    response_model=list[TransferDestinationPublic],
+    tags=["production-events"],
+)
+async def list_transfer_destinations(
+    batch_id: uuid.UUID,
+    user: CurrentUser,
+    session: DBSession,
+    service: Annotated[ProductionEventService, Depends(get_event_service)],
+) -> list[TransferDestinationPublic]:
+    """List eligible destinations using the source batch as the authority boundary."""
+    batch, unit, _site, farm = await _load_batch(batch_id, user, session)
+    await _enforce_prod_permission(
+        user=user,
+        session=session,
+        code="production_event.create",
+        organization_id=farm.organization_id,
+        farm_id=farm.id,
+    )
+    destinations = await service.list_transfer_destinations(batch=batch, unit=unit, farm=farm)
+    return [TransferDestinationPublic(**destination) for destination in destinations]
 
 
 @router.get(

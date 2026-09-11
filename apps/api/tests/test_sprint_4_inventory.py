@@ -139,6 +139,49 @@ async def test_owner_can_create_warehouse_and_item(client: AsyncClient) -> None:
     assert wh_id and item_id
 
 
+async def test_operational_lists_exclude_closed_warehouses_and_inactive_items(
+    client: AsyncClient,
+) -> None:
+    ctx = await _new_owner_org_farm(client)
+    active_warehouse_id = await _create_warehouse(client, ctx["org_id"], code="OP-ACTIVE")
+    closed_warehouse_id = await _create_warehouse(client, ctx["org_id"], code="OP-CLOSED")
+    active_item_id = await _create_feed_item(client, ctx["org_id"])
+    inactive_item_id = await _create_feed_item(client, ctx["org_id"])
+
+    warehouse_update = await client.patch(
+        f"/api/v1/warehouses/{closed_warehouse_id}", json={"status": "closed"}
+    )
+    item_update = await client.patch(
+        f"/api/v1/inventory-items/{inactive_item_id}", json={"is_active": False}
+    )
+    assert warehouse_update.status_code == 200, warehouse_update.text
+    assert item_update.status_code == 200, item_update.text
+
+    default_warehouses = await client.get(f"/api/v1/organizations/{ctx['org_id']}/warehouses")
+    operational_warehouses = await client.get(
+        f"/api/v1/organizations/{ctx['org_id']}/warehouses?operational_only=true"
+    )
+    default_items = await client.get(f"/api/v1/organizations/{ctx['org_id']}/inventory-items")
+    operational_items = await client.get(
+        f"/api/v1/organizations/{ctx['org_id']}/inventory-items?operational_only=true"
+    )
+
+    assert default_warehouses.status_code == 200, default_warehouses.text
+    assert operational_warehouses.status_code == 200, operational_warehouses.text
+    assert default_items.status_code == 200, default_items.text
+    assert operational_items.status_code == 200, operational_items.text
+    assert {row["id"] for row in default_warehouses.json()} == {
+        active_warehouse_id,
+        closed_warehouse_id,
+    }
+    assert {row["id"] for row in operational_warehouses.json()} == {active_warehouse_id}
+    assert {row["id"] for row in default_items.json()} == {
+        active_item_id,
+        inactive_item_id,
+    }
+    assert {row["id"] for row in operational_items.json()} == {active_item_id}
+
+
 async def test_cross_org_cannot_see_warehouse(client: AsyncClient) -> None:
     """Non-member of an org gets 404 on the warehouse endpoints."""
     a = await _new_owner_org_farm(client)

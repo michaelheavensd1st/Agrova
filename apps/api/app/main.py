@@ -20,6 +20,7 @@ from app.core.rate_limit_factory import (
     get_rate_limiter,
 )
 from app.db.session import dispose_engine
+from app.email.factory import EmailSenderUnavailableError, get_email_sender
 
 configure_logging()
 logger = logging.getLogger("app.main")
@@ -46,6 +47,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("rate_limit.ready", extra={"backend": backend, "healthy": healthy})
     except RateLimiterUnavailableError as exc:
         logger.error("rate_limit.unavailable", extra={"error": str(exc)})
+        raise
+    try:
+        sender = get_email_sender()
+        logger.info("email.ready", extra={"provider": settings.email_provider.lower()})
+        _ = sender
+    except EmailSenderUnavailableError as exc:
+        logger.error("email.unavailable", extra={"error": str(exc)})
         raise
     try:
         yield

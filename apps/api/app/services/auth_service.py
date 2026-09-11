@@ -230,7 +230,7 @@ class AuthService:
         # identically for existing and non-existent emails.
         await self._enforce_login_rate_limit(email=email, ip_address=ip_address)
 
-        user = await self.user_repo.get_by_email(email)
+        user = await self.user_repo.get_by_email_for_update(email)
         if user is None or user.hashed_password is None:
             raise self._invalid_credentials()
         if not verify_password(password, user.hashed_password):
@@ -260,8 +260,27 @@ class AuthService:
             raise self._invalid_refresh() from exc
 
         token_hash = _hash_token(refresh_token)
-        stored = await self.refresh_repo.get_by_hash(token_hash)
-        if stored is None or stored.is_revoked:
+        identity = await self.refresh_repo.resolve_identity_by_hash(token_hash)
+        if identity is None:
+            raise self._invalid_refresh()
+
+        try:
+            user_id = UUID(payload["sub"])
+        except (KeyError, ValueError) as exc:
+            raise self._invalid_refresh() from exc
+
+        if identity.user_id != user_id:
+            raise self._invalid_refresh()
+
+        user = await self.user_repo.get_by_id_for_update(user_id)
+        if user is None or not user.is_active:
+            raise self._invalid_refresh()
+
+        stored = await self.refresh_repo.get_by_id_for_update(
+            token_id=identity.id,
+            user_id=user.id,
+        )
+        if stored is None or stored.token_hash != token_hash or stored.is_revoked:
             raise self._invalid_refresh()
         # SQLite drops tz info — normalise before comparing.
         exp = stored.expires_at
@@ -270,16 +289,7 @@ class AuthService:
         if exp < datetime.now(UTC):
             raise self._invalid_refresh()
 
-        try:
-            user_id = UUID(payload["sub"])
-        except (KeyError, ValueError) as exc:
-            raise self._invalid_refresh() from exc
-
-        user = await self.user_repo.get_by_id(user_id)
-        if user is None or not user.is_active:
-            raise self._invalid_refresh()
-
-        await self.refresh_repo.revoke_by_hash(token_hash)
+        await self.refresh_repo.revoke_rows([stored])
         return await self._issue_token_pair(user=user, user_agent=user_agent, ip_address=ip_address)
 
     async def logout(self, *, refresh_token: str) -> None:
@@ -295,7 +305,7 @@ class AuthService:
         access_token, access_exp = create_token(
             subject=user.id,
             token_type="access",
-            extra_claims={"email": user.email},
+            extra_claims={"email": user.email, "sv": user.session_version},
         )
         jti = secrets.token_urlsafe(16)
         refresh_token, refresh_exp = create_token(

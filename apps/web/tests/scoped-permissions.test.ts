@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { hasScopedPermission } from '@/lib/permissions';
+import { hasPlatformPermission, hasScopedPermission } from '@/lib/permissions';
 import type { CurrentUser } from '@/lib/types';
 
 const USER: CurrentUser = {
@@ -77,5 +77,20 @@ describe('hasScopedPermission', () => {
     expect(
       hasScopedPermission({ ...USER, permission_scopes: [] }, 'production_batch.create', context),
     ).toBe(false);
+  });
+});
+
+describe('hasPlatformPermission', () => {
+  it('accepts the exact platform capability, wildcard, or superuser flag', () => {
+    expect(
+      hasPlatformPermission({ ...USER, permissions: ['platform.admin'] }, 'platform.admin'),
+    ).toBe(true);
+    expect(hasPlatformPermission({ ...USER, permissions: ['*'] }, 'platform.admin')).toBe(true);
+    expect(hasPlatformPermission({ ...USER, is_superuser: true }, 'platform.admin')).toBe(true);
+  });
+
+  it('does not treat organization permissions or ownership-like scopes as platform authority', () => {
+    expect(hasPlatformPermission(USER, 'platform.admin')).toBe(false);
+    expect(hasPlatformPermission(null, 'platform.admin')).toBe(false);
   });
 });

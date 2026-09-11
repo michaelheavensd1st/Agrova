@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response, status
@@ -10,11 +12,20 @@ from fastapi.responses import JSONResponse
 from app.core.config import get_settings
 from app.core.cookies import clear_auth_cookies, set_auth_cookies
 from app.core.trusted_proxy import get_client_ip
-from app.deps import CurrentUser, DBSession, get_auth_service
+from app.deps import (
+    CurrentUser,
+    DBSession,
+    RequestCtx,
+    get_auth_service,
+    get_password_recovery_service,
+)
+from app.email.base import EmailSender
 from app.models.user import User
 from app.schemas.auth import (
     LoginRequest,
     LogoutRequest,
+    PasswordRecoveryRequest,
+    PasswordRecoveryResetRequest,
     RefreshRequest,
     RegisterRequest,
     ResendVerificationRequest,
@@ -24,9 +35,75 @@ from app.schemas.common import MessageResponse
 from app.schemas.user import PermissionScopePublic, UserPublic
 from app.security.authorize import resolve_permission_scopes
 from app.services.auth_service import AuthService
+from app.services.password_recovery import (
+    PasswordRecoveryService,
+    RecoveryDelivery,
+    deliver_recovery_email,
+)
 
 router = APIRouter()
 _settings = get_settings()
+logger = logging.getLogger("app.auth")
+
+_RECOVERY_REQUEST_MESSAGE = (
+    "If an eligible account exists, password recovery instructions will be sent."
+)
+_recovery_delivery_tasks: set[asyncio.Task[None]] = set()
+_recovery_delivery_tails: dict[str, asyncio.Task[None]] = {}
+
+
+async def _deliver_recovery_operational(
+    *,
+    email_sender: EmailSender,
+    delivery: RecoveryDelivery,
+    predecessor: asyncio.Task[None] | None,
+) -> None:
+    if predecessor is not None:
+        await predecessor
+    try:
+        await deliver_recovery_email(
+            email_sender=email_sender,
+            settings=_settings,
+            delivery=delivery,
+        )
+    except Exception as exc:
+        # Operational metadata only: never log recipient, token, content,
+        # authorization material, or whether an account was eligible.
+        logger.warning(
+            "auth.recovery.delivery.failed",
+            extra={
+                "provider": _settings.email_provider.lower(),
+                "error_type": type(exc).__name__,
+            },
+        )
+
+
+def _schedule_recovery_delivery(*, email_sender: EmailSender, delivery: RecoveryDelivery) -> None:
+    """Keep password-recovery delivery alive without retaining its DB session.
+
+    Issuance is committed before this is called. This deliberately small
+    in-process handoff has an at-most-once gap: a process crash after commit
+    and before/during delivery can leave a valid token whose email was not sent.
+    """
+    account_key = delivery.to.strip().lower()
+    predecessor = _recovery_delivery_tails.get(account_key)
+    task = asyncio.create_task(
+        _deliver_recovery_operational(
+            email_sender=email_sender,
+            delivery=delivery,
+            predecessor=predecessor,
+        ),
+        name="password-recovery-email-delivery",
+    )
+    _recovery_delivery_tasks.add(task)
+    _recovery_delivery_tails[account_key] = task
+
+    def release_references(completed: asyncio.Task[None]) -> None:
+        _recovery_delivery_tasks.discard(completed)
+        if _recovery_delivery_tails.get(account_key) is completed:
+            _recovery_delivery_tails.pop(account_key, None)
+
+    task.add_done_callback(release_references)
 
 
 def _to_public(
@@ -80,6 +157,47 @@ async def resend_verification(
     await service.resend_verification(email=payload.email, ip_address=ip)
     # Always OK to avoid leaking account existence.
     return MessageResponse(message="If the account exists, a verification email was sent.")
+
+
+@router.post(
+    "/recovery/request",
+    response_model=MessageResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def request_password_recovery(
+    payload: PasswordRecoveryRequest,
+    request: Request,
+    request_ctx: RequestCtx,
+    session: DBSession,
+    service: Annotated[PasswordRecoveryService, Depends(get_password_recovery_service)],
+) -> MessageResponse:
+    delivery = await service.prepare_request(
+        email=payload.email,
+        ip_address=get_client_ip(request),
+        request_ctx=request_ctx,
+    )
+    if delivery is not None:
+        # Issuance and its audit record must be durable before the raw token
+        # crosses the delivery boundary.
+        await session.commit()
+        _schedule_recovery_delivery(email_sender=service.email_sender, delivery=delivery)
+    return MessageResponse(message=_RECOVERY_REQUEST_MESSAGE)
+
+
+@router.post("/recovery/reset", response_model=MessageResponse)
+async def reset_password(
+    payload: PasswordRecoveryResetRequest,
+    response: Response,
+    request_ctx: RequestCtx,
+    service: Annotated[PasswordRecoveryService, Depends(get_password_recovery_service)],
+) -> MessageResponse:
+    await service.reset_password(
+        raw_token=payload.token,
+        new_password=payload.new_password,
+        request_ctx=request_ctx,
+    )
+    clear_auth_cookies(response)
+    return MessageResponse(message="Password reset successful. Please sign in again.")
 
 
 @router.post("/login")

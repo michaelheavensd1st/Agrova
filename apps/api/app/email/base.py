@@ -25,3 +25,10 @@ class EmailSender(Protocol):
     """Send transactional email. Implementations must be idempotent."""
 
     async def send(self, message: EmailMessage) -> None: ...
+
+
+class EmailDeliveryError(RuntimeError):
+    """A bounded provider failure safe for application-level handling."""
+
+
+__all__ = ["EmailDeliveryError", "EmailMessage", "EmailSender"]

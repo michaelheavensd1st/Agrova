@@ -15,6 +15,15 @@ _logger = logging.getLogger("app.email")
 
 class LogEmailSender(EmailSender):
     async def send(self, message: EmailMessage) -> None:
+        if message.template == "auth.password_recovery":
+            _logger.info(
+                "email.dispatch",
+                extra={
+                    "template": message.template,
+                    "sensitive_content": "redacted",
+                },
+            )
+            return
         _logger.info(
             "email.dispatch",
             extra={

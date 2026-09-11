@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
+    admin_users,
     audit,
     auth,
     business_partners,
@@ -25,6 +26,7 @@ api_v1_router = APIRouter()
 api_v1_router.include_router(health.router, prefix="/health", tags=["health"])
 api_v1_router.include_router(version.router, prefix="/version", tags=["version"])
 api_v1_router.include_router(auth.router, prefix="/auth", tags=["auth"])
+api_v1_router.include_router(admin_users.router, prefix="/admin/users", tags=["admin-users"])
 api_v1_router.include_router(organizations.router, prefix="/organizations", tags=["organizations"])
 api_v1_router.include_router(farms.router, tags=["farms"])
 api_v1_router.include_router(invitations.router, tags=["invitations"])

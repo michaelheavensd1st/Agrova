@@ -125,6 +125,21 @@ export const EXPIRING_SOON_DAYS = 30;
 /** Cap on the number of rows surfaced in the attention list. */
 export const ATTENTION_LIST_LIMIT = 20;
 
+/**
+ * Release 6.0.6 production receipt-acceptance fixture.
+ *
+ * Its immutable receipt and ledger history must remain available through
+ * administrative/history views, but its synthetic stock must not enter the
+ * operational dashboard projection. Match the documented immutable UUID so
+ * legitimate closed warehouses (including similarly named ones) remain
+ * visible in reporting.
+ */
+export const QUARANTINED_RECEIPT_FIXTURE_WAREHOUSE_ID = '94e15351-d4b4-46bc-ac36-a304c675ba8f';
+
+export function isQuarantinedReceiptFixtureWarehouse(warehouse: { id: string }): boolean {
+  return warehouse.id === QUARANTINED_RECEIPT_FIXTURE_WAREHOUSE_ID;
+}
+
 /** Parse the JSON balance (arrives as string from FastAPI Decimal). */
 export function parseBalance(raw: number | string): number {
   const n = typeof raw === 'string' ? Number(raw) : raw;

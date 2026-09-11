@@ -26,6 +26,7 @@ import {
   EXPIRING_SOON_DAYS,
   isItemInCurrentOrg,
   isLotInCurrentOrg,
+  QUARANTINED_RECEIPT_FIXTURE_WAREHOUSE_ID,
   isWarehouseInCurrentOrg,
   parseBalance,
   resolveOrganizationId,
@@ -46,6 +47,7 @@ import {
 // --------------------------------------------------------------------- //
 
 const NOW = '2026-02-15T12:00:00.000Z';
+const CANONICAL_RELEASE_606_RECEIPT_FIXTURE_WAREHOUSE_ID = '94e15351-d4b4-46bc-ac36-a304c675ba8f';
 
 const WH_MAIN: DashboardWarehouse = {
   id: 'wh-1',
@@ -118,6 +120,12 @@ function makeLot(overrides: Partial<DashboardLot>): DashboardLot {
 // --------------------------------------------------------------------- //
 
 describe('inventory-dashboard aggregation', () => {
+  it('anchors the quarantine to the canonical Release 6.0.6 fixture warehouse', () => {
+    expect(QUARANTINED_RECEIPT_FIXTURE_WAREHOUSE_ID).toBe(
+      CANONICAL_RELEASE_606_RECEIPT_FIXTURE_WAREHOUSE_ID,
+    );
+  });
+
   it('parseBalance handles strings, numbers and garbage', () => {
     expect(parseBalance('12.5')).toBe(12.5);
     expect(parseBalance(0)).toBe(0);
@@ -574,6 +582,65 @@ describe('InventoryDashboardPage', () => {
       'href',
       '/inventory?organization_id=org-1&tab=history',
     );
+  });
+
+  it('preserves legitimate closed stock and inactive metadata while excluding the receipt fixture', async () => {
+    const receiptFixtureWarehouse: DashboardWarehouse = {
+      ...WH_CLOSED,
+      id: CANONICAL_RELEASE_606_RECEIPT_FIXTURE_WAREHOUSE_ID,
+      code: 'UAT_RECEIPT_WH_A',
+      name: 'UAT Receipt Warehouse A',
+    };
+    primeApi({
+      orgs: [{ id: 'org-1', name: 'Aegis', slug: 'aegis' }],
+      warehousesByOrg: { 'org-1': [WH_MAIN, WH_CLOSED, receiptFixtureWarehouse] },
+      itemsByOrg: { 'org-1': [ITEM_FEED, ITEM_INACTIVE] },
+      lotsByWh: {
+        [WH_MAIN.id]: [makeLot({ id: 'operational-lot', balance: '5' })],
+        [WH_CLOSED.id]: [
+          makeLot({
+            id: 'legitimate-closed-lot',
+            item_id: ITEM_INACTIVE.id,
+            warehouse_id: WH_CLOSED.id,
+            lot_code: 'LEGIT-CLOSED-LOT',
+            balance: '0',
+          }),
+        ],
+        [receiptFixtureWarehouse.id]: [
+          makeLot({
+            id: 'quarantined-receipt-lot',
+            warehouse_id: receiptFixtureWarehouse.id,
+            balance: '100',
+          }),
+        ],
+      },
+    });
+
+    render(<InventoryDashboardPage />);
+    await screen.findByTestId('inventory-dashboard-summary');
+
+    expect(mockedApiFetch).toHaveBeenCalledWith('/v1/organizations/org-1/warehouses');
+    expect(mockedApiFetch).toHaveBeenCalledWith('/v1/organizations/org-1/inventory-items');
+    expect(mockedApiFetch).toHaveBeenCalledWith(`/v1/warehouses/${WH_CLOSED.id}/lots`);
+    expect(mockedApiFetch).not.toHaveBeenCalledWith(
+      `/v1/warehouses/${receiptFixtureWarehouse.id}/lots`,
+    );
+    expect(
+      screen.getByTestId('inventory-dashboard-metric-total_warehouses-value'),
+    ).toHaveTextContent('2');
+    expect(screen.getByTestId('inventory-dashboard-metric-total_lots-value')).toHaveTextContent(
+      '2',
+    );
+    expect(
+      screen.getByTestId('inventory-dashboard-metric-total_active_items-value'),
+    ).toHaveTextContent('1');
+    expect(
+      screen.getByTestId('inventory-dashboard-attention-row-legitimate-closed-lot'),
+    ).toHaveTextContent('Old bags');
+    expect(
+      screen.getByTestId('inventory-dashboard-attention-row-legitimate-closed-lot'),
+    ).toHaveTextContent('Archived');
+    expect(screen.queryByText('100')).not.toBeInTheDocument();
   });
 
   // ------------------------------------------------------------------- //
