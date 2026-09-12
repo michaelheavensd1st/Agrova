@@ -4,6 +4,9 @@
   },
   "build": {
     "sdk56-validation": {
+      "android": {
+        "buildType": "apk"
+      },
       "ios": {
         "simulator": true
       }
