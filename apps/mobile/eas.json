@@ -1,0 +1,12 @@
+{
+  "cli": {
+    "version": ">= 24.3.0"
+  },
+  "build": {
+    "sdk56-validation": {
+      "ios": {
+        "simulator": true
+      }
+    }
+  }
+}

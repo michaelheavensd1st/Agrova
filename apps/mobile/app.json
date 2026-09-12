@@ -7,7 +7,7 @@
     "userInterfaceStyle": "automatic",
     "scheme": "agrovix",
     "assetBundlePatterns": ["**/*"],
-    "ios": { "supportsTablet": true, "bundleIdentifier": "com.agrovix.agos" },
+    "ios": { "supportsTablet": true, "bundleIdentifier": "com.agrovix.agos", "infoPlist": { "ITSAppUsesNonExemptEncryption": false } },
     "android": {
       "package": "com.agrovix.agos",
       "adaptiveIcon": { "backgroundColor": "#0f2e1e" }
@@ -15,6 +15,6 @@
     "web": { "bundler": "metro" },
     "plugins": ["expo-router", "expo-splash-screen", "expo-secure-store"],
     "experiments": { "typedRoutes": true },
-    "extra": { "apiUrl": "http://localhost:8000/api" }
+    "extra": { "apiUrl": "http://localhost:8000/api", "eas": { "projectId": "6783007a-6775-474e-b20f-2af395cb58ed" } }
   }
 }
