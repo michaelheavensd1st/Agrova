@@ -4,6 +4,9 @@
   },
   "build": {
     "sdk56-validation": {
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://agrovix-api-amused-ambition-release-uat.up.railway.app/api"
+      },
       "android": {
         "buildType": "apk"
       },

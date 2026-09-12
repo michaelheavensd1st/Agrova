@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Cookie, Depends, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, Header, Request, Response, status
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
@@ -22,6 +22,7 @@ from app.deps import (
 from app.email.base import EmailSender
 from app.models.user import User
 from app.schemas.auth import (
+    CookieAuthResponse,
     LoginRequest,
     LogoutRequest,
     PasswordRecoveryRequest,
@@ -29,6 +30,7 @@ from app.schemas.auth import (
     RefreshRequest,
     RegisterRequest,
     ResendVerificationRequest,
+    TokenPair,
     VerifyEmailRequest,
 )
 from app.schemas.common import MessageResponse
@@ -44,6 +46,8 @@ from app.services.password_recovery import (
 router = APIRouter()
 _settings = get_settings()
 logger = logging.getLogger("app.auth")
+
+_AUTH_TRANSPORT_HEADER = "X-Agrovix-Auth-Transport"
 
 _RECOVERY_REQUEST_MESSAGE = (
     "If an eligible account exists, password recovery instructions will be sent."
@@ -200,11 +204,37 @@ async def reset_password(
     return MessageResponse(message="Password reset successful. Please sign in again.")
 
 
-@router.post("/login")
+def _auth_response(
+    *,
+    tokens: TokenPair,
+    service: AuthService,
+    transport: Literal["bearer"] | None,
+) -> JSONResponse:
+    if transport == "bearer":
+        return JSONResponse(tokens.model_dump())
+
+    access_life, refresh_life = service.token_lifetimes()
+    response = JSONResponse(
+        CookieAuthResponse(token_type=tokens.token_type, expires_in=tokens.expires_in).model_dump()
+    )
+    set_auth_cookies(
+        response,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        access_max_age_s=int(access_life.total_seconds()),
+        refresh_max_age_s=int(refresh_life.total_seconds()),
+    )
+    return response
+
+
+@router.post("/login", response_model=CookieAuthResponse | TokenPair)
 async def login(
     payload: LoginRequest,
     request: Request,
     service: Annotated[AuthService, Depends(get_auth_service)],
+    auth_transport: Annotated[
+        Literal["bearer"] | None, Header(alias=_AUTH_TRANSPORT_HEADER)
+    ] = None,
 ) -> JSONResponse:
     ua = request.headers.get("user-agent")
     ip = get_client_ip(request)
@@ -212,42 +242,31 @@ async def login(
         email=payload.email, password=payload.password, user_agent=ua, ip_address=ip
     )
 
-    access_life, refresh_life = service.token_lifetimes()
-    response = JSONResponse({"token_type": "bearer", "expires_in": tokens.expires_in})
-    set_auth_cookies(
-        response,
-        access_token=tokens.access_token,
-        refresh_token=tokens.refresh_token,
-        access_max_age_s=int(access_life.total_seconds()),
-        refresh_max_age_s=int(refresh_life.total_seconds()),
-    )
-    return response
+    return _auth_response(tokens=tokens, service=service, transport=auth_transport)
 
 
-@router.post("/refresh")
+@router.post("/refresh", response_model=CookieAuthResponse | TokenPair)
 async def refresh(
     payload: RefreshRequest,
     request: Request,
     service: Annotated[AuthService, Depends(get_auth_service)],
     cookie_refresh: Annotated[str | None, Cookie(alias=_settings.cookie_refresh_name)] = None,
+    auth_transport: Annotated[
+        Literal["bearer"] | None, Header(alias=_AUTH_TRANSPORT_HEADER)
+    ] = None,
 ) -> JSONResponse:
-    refresh_token = payload.refresh_token or cookie_refresh
+    refresh_token = (
+        payload.refresh_token
+        if auth_transport == "bearer"
+        else payload.refresh_token or cookie_refresh
+    )
     if not refresh_token:
         return JSONResponse({"detail": "Missing refresh token."}, status_code=401)
     ua = request.headers.get("user-agent")
     ip = get_client_ip(request)
     tokens = await service.refresh(refresh_token=refresh_token, user_agent=ua, ip_address=ip)
 
-    access_life, refresh_life = service.token_lifetimes()
-    response = JSONResponse({"token_type": "bearer", "expires_in": tokens.expires_in})
-    set_auth_cookies(
-        response,
-        access_token=tokens.access_token,
-        refresh_token=tokens.refresh_token,
-        access_max_age_s=int(access_life.total_seconds()),
-        refresh_max_age_s=int(refresh_life.total_seconds()),
-    )
-    return response
+    return _auth_response(tokens=tokens, service=service, transport=auth_transport)
 
 
 @router.post("/logout", response_model=MessageResponse)

@@ -10,8 +10,25 @@
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
-const ACCESS_KEY = 'agrovix.access_token';
-const REFRESH_KEY = 'agrovix.refresh_token';
+const TOKEN_PAIR_KEY = 'agrovix.token_pair';
+const LEGACY_ACCESS_KEY = 'agrovix.access_token';
+const LEGACY_REFRESH_KEY = 'agrovix.refresh_token';
+
+interface StoredTokenPair {
+  accessToken: string;
+  refreshToken: string;
+}
+
+let storageQueue: Promise<void> = Promise.resolve();
+
+function withStorageLock<T>(operation: () => Promise<T>): Promise<T> {
+  const result = storageQueue.then(operation, operation);
+  storageQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
 
 async function setItem(key: string, value: string): Promise<void> {
   if (Platform.OS === 'web') {
@@ -39,20 +56,53 @@ async function deleteItem(key: string): Promise<void> {
   await SecureStore.deleteItemAsync(key);
 }
 
-export async function setTokens(access: string, refresh: string): Promise<void> {
-  await setItem(ACCESS_KEY, access);
-  await setItem(REFRESH_KEY, refresh);
+async function setTokensUnlocked(access: string, refresh: string): Promise<void> {
+  await setItem(TOKEN_PAIR_KEY, JSON.stringify({ accessToken: access, refreshToken: refresh }));
+  await Promise.all([deleteItem(LEGACY_ACCESS_KEY), deleteItem(LEGACY_REFRESH_KEY)]);
 }
 
-export async function clearTokens(): Promise<void> {
-  await deleteItem(ACCESS_KEY);
-  await deleteItem(REFRESH_KEY);
+export function setTokens(access: string, refresh: string): Promise<void> {
+  return withStorageLock(() => setTokensUnlocked(access, refresh));
 }
 
-export async function getAccessToken(): Promise<string | null> {
-  return getItem(ACCESS_KEY);
+export function clearTokens(): Promise<void> {
+  return withStorageLock(async () => {
+    const results = await Promise.allSettled([
+      deleteItem(TOKEN_PAIR_KEY),
+      deleteItem(LEGACY_ACCESS_KEY),
+      deleteItem(LEGACY_REFRESH_KEY),
+    ]);
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+  });
 }
 
-export async function getRefreshToken(): Promise<string | null> {
-  return getItem(REFRESH_KEY);
+async function getTokensUnlocked(): Promise<StoredTokenPair | null> {
+  const value = await getItem(TOKEN_PAIR_KEY);
+  if (value) {
+    try {
+      const tokens = JSON.parse(value) as Partial<StoredTokenPair>;
+      return typeof tokens.accessToken === 'string' && typeof tokens.refreshToken === 'string'
+        ? (tokens as StoredTokenPair)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const [accessToken, refreshToken] = await Promise.all([
+    getItem(LEGACY_ACCESS_KEY),
+    getItem(LEGACY_REFRESH_KEY),
+  ]);
+  if (!accessToken || !refreshToken) return null;
+  await setTokensUnlocked(accessToken, refreshToken);
+  return { accessToken, refreshToken };
+}
+
+export function getAccessToken(): Promise<string | null> {
+  return withStorageLock(async () => (await getTokensUnlocked())?.accessToken ?? null);
+}
+
+export function getRefreshToken(): Promise<string | null> {
+  return withStorageLock(async () => (await getTokensUnlocked())?.refreshToken ?? null);
 }

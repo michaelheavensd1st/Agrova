@@ -49,15 +49,15 @@ class PasswordRecoveryResetRequest(BaseModel):
     new_password: str = Field(..., min_length=_settings.password_min_length, max_length=128)
 
 
-class TokenPair(BaseModel):
-    """Legacy body-token response.
+class CookieAuthResponse(BaseModel):
+    """Browser response; credentials are carried only by httpOnly cookies."""
 
-    Web clients receive the tokens as httpOnly cookies instead; this shape
-    is preserved for mobile / server-to-server clients that still opt into
-    header-based auth.
-    """
+    token_type: str = Field(default="bearer")
+    expires_in: int
+
+
+class TokenPair(CookieAuthResponse):
+    """Explicit bearer transport response for native clients."""
 
     access_token: str
     refresh_token: str
-    token_type: str = Field(default="bearer")
-    expires_in: int
